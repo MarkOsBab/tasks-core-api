@@ -11,7 +11,6 @@ import {
   reqString,
 } from '@/lib/validation';
 
-export const TASK_STATUS = ['todo', 'in_progress', 'review', 'done'] as const;
 export const TASK_PRIORITY = ['low', 'medium', 'high', 'urgent'] as const;
 
 const DMY_PATTERN = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
@@ -43,12 +42,13 @@ function nullableDate(attr: string) {
     .optional();
 }
 
-// Prisma read (not rawExists) so soft-deleted projects are not selectable.
-async function projectExists(id: string): Promise<boolean> {
+// Prisma read (not rawExists) so columns of soft-deleted projects are still selectable
+// (a project board's columns live on; the extension only filters the Task/Project reads).
+async function columnExists(id: string): Promise<boolean> {
   const bigId = toBigIntOrUndefined(id);
   if (bigId === undefined) return false;
-  const project = await prisma.project.findFirst({ where: { id: bigId }, select: { id: true } });
-  return project !== null;
+  const column = await prisma.boardColumn.findFirst({ where: { id: bigId }, select: { id: true } });
+  return column !== null;
 }
 
 async function userExists(id: string): Promise<boolean> {
@@ -60,21 +60,20 @@ async function userExists(id: string): Promise<boolean> {
 
 export const storeTaskSchema = z
   .object({
-    projectId: reqString('projectId'),
+    columnId: reqString('columnId'),
     title: reqString('title', 255),
     description: nullableString('description'),
-    status: reqEnum('status', TASK_STATUS).default('todo'),
     priority: reqEnum('priority', TASK_PRIORITY).default('medium'),
     position: nullableInt('position', 0),
     dueDate: nullableDate('dueDate'),
     assigneeId: nullableString('assigneeId'),
   })
   .superRefine(async (val, ctx) => {
-    if (!(await projectExists(val.projectId))) {
+    if (!(await columnExists(val.columnId))) {
       ctx.addIssue({
-        path: ['projectId'],
+        path: ['columnId'],
         code: z.ZodIssueCode.custom,
-        message: lmsg.selected('projectId'),
+        message: lmsg.selected('columnId'),
       });
     }
     if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {
@@ -90,21 +89,20 @@ export const storeTaskSchema = z
 export function updateTaskSchema(_id: string) {
   return z
     .object({
-      projectId: optionalRequiredString('projectId'),
+      columnId: optionalRequiredString('columnId'),
       title: optionalRequiredString('title', 255),
       description: nullableString('description'),
-      status: optionalEnum('status', TASK_STATUS),
       priority: optionalEnum('priority', TASK_PRIORITY),
       position: nullableInt('position', 0),
       dueDate: nullableDate('dueDate'),
       assigneeId: nullableString('assigneeId'),
     })
     .superRefine(async (val, ctx) => {
-      if (val.projectId !== undefined && !(await projectExists(val.projectId))) {
+      if (val.columnId !== undefined && !(await columnExists(val.columnId))) {
         ctx.addIssue({
-          path: ['projectId'],
+          path: ['columnId'],
           code: z.ZodIssueCode.custom,
-          message: lmsg.selected('projectId'),
+          message: lmsg.selected('columnId'),
         });
       }
       if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {
@@ -117,13 +115,23 @@ export function updateTaskSchema(_id: string) {
     });
 }
 
-export const moveTaskSchema = z.object({
-  status: reqEnum('status', TASK_STATUS),
-  position: z
-    .number({
-      required_error: lmsg.required('position'),
-      invalid_type_error: lmsg.integer('position'),
-    })
-    .int(lmsg.integer('position'))
-    .min(0, lmsg.min('position', 0)),
-});
+export const moveTaskSchema = z
+  .object({
+    columnId: reqString('columnId'),
+    position: z
+      .number({
+        required_error: lmsg.required('position'),
+        invalid_type_error: lmsg.integer('position'),
+      })
+      .int(lmsg.integer('position'))
+      .min(0, lmsg.min('position', 0)),
+  })
+  .superRefine(async (val, ctx) => {
+    if (!(await columnExists(val.columnId))) {
+      ctx.addIssue({
+        path: ['columnId'],
+        code: z.ZodIssueCode.custom,
+        message: lmsg.selected('columnId'),
+      });
+    }
+  });

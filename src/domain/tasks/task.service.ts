@@ -1,9 +1,10 @@
-import type { TaskStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
 import { TaskRepository, taskRepository } from './task.repository';
 import { parseDateInput } from './task.schema';
 import type { TaskWithRelations } from './task.types';
+
+const TASK_INCLUDE = { column: { include: { board: true } }, project: true, assignee: true } as const;
 
 class TaskService extends BaseService<TaskWithRelations> {
   constructor(private readonly tasks: TaskRepository) {
@@ -16,8 +17,16 @@ class TaskService extends BaseService<TaskWithRelations> {
   ): Promise<Record<string, unknown>> {
     const prepared: Record<string, unknown> = { ...data };
 
-    if (typeof prepared.projectId === 'string') {
-      prepared.projectId = BigInt(prepared.projectId);
+    if (typeof prepared.columnId === 'string') {
+      prepared.columnId = BigInt(prepared.columnId);
+    }
+    // projectId is denormalized from the target column's board (null for global/standalone tasks).
+    if (prepared.columnId != null) {
+      const column = await prisma.boardColumn.findUnique({
+        where: { id: prepared.columnId as bigint },
+        include: { board: true },
+      });
+      prepared.projectId = column?.board.projectId ?? null;
     }
     if ('assigneeId' in prepared) {
       prepared.assigneeId =
@@ -30,29 +39,33 @@ class TaskService extends BaseService<TaskWithRelations> {
         typeof prepared.dueDate === 'string' ? parseDateInput(prepared.dueDate) : null;
     }
     if (prepared.position == null) {
-      if (existing) {
-        delete prepared.position; // partial update without position keeps the current one
+      const movingColumn =
+        existing != null && prepared.columnId != null && prepared.columnId !== existing.columnId;
+      if (existing && !movingColumn) {
+        delete prepared.position; // partial update in the same column keeps the current position
       } else {
-        // New tasks land at the end of their project+status column.
+        // New task, or a modal edit that changes the column: land at the end of the target column.
         prepared.position = await prisma.task.count({
-          where: {
-            projectId: prepared.projectId as bigint,
-            status: (prepared.status as TaskStatus | undefined) ?? 'todo',
-          },
+          where: { columnId: prepared.columnId as bigint },
         });
       }
     }
     return prepared;
   }
 
-  /** Kanban move: closes the origin-column gap, opens one in the destination, relocates the task. */
-  move(existing: TaskWithRelations, status: TaskStatus, position: number): Promise<TaskWithRelations> {
+  /** Kanban move: closes the origin-column gap, opens one in the destination, relocates the card. */
+  move(existing: TaskWithRelations, columnId: string, position: number): Promise<TaskWithRelations> {
+    const targetColumnId = BigInt(columnId);
     return prisma.$transaction(async (tx) => {
+      // The destination column's board drives the denormalized projectId (project <-> global moves).
+      const target = await tx.boardColumn.findUniqueOrThrow({
+        where: { id: targetColumnId },
+        include: { board: true },
+      });
       // Writes bypass the soft-delete read extension, so filter deletedAt by hand.
       await tx.task.updateMany({
         where: {
-          projectId: existing.projectId,
-          status: existing.status,
+          columnId: existing.columnId,
           position: { gt: existing.position },
           id: { not: existing.id },
           deletedAt: null,
@@ -61,8 +74,7 @@ class TaskService extends BaseService<TaskWithRelations> {
       });
       await tx.task.updateMany({
         where: {
-          projectId: existing.projectId,
-          status,
+          columnId: targetColumnId,
           position: { gte: position },
           id: { not: existing.id },
           deletedAt: null,
@@ -71,8 +83,8 @@ class TaskService extends BaseService<TaskWithRelations> {
       });
       return tx.task.update({
         where: { id: existing.id },
-        data: { status, position },
-        include: { project: true, assignee: true },
+        data: { columnId: targetColumnId, position, projectId: target.board.projectId },
+        include: TASK_INCLUDE,
       });
     });
   }

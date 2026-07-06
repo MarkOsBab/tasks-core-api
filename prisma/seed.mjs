@@ -5,6 +5,15 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+// Same defaults the boards_and_columns migration seeds, so fresh installs match migrated DBs.
+const DEFAULT_COLUMNS = [
+  { name: 'Pendiente', position: 0, color: '#94a3b8', isTerminal: false },
+  { name: 'En progreso', position: 1, color: '#f59e0b', isTerminal: false },
+  { name: 'En revisión', position: 2, color: '#8b5cf6', isTerminal: false },
+  { name: 'Terminada', position: 3, color: '#22c55e', isTerminal: true },
+];
+const STATUS_POSITION = { todo: 0, in_progress: 1, review: 2, done: 3 };
+
 async function main() {
   const password = await bcrypt.hash('password', 10);
 
@@ -45,6 +54,11 @@ async function main() {
     description: 'Cross-platform MVP for field agents.',
     status: 'draft',
   });
+
+  // One board (with the default columns) per project + the single global board.
+  await ensureBoard(website.id, 'Tablero');
+  await ensureBoard(app.id, 'Tablero');
+  await ensureBoard(null, 'Tablero global');
 
   await upsertProposal(website.id, {
     title: 'Website redesign — phase 1',
@@ -93,10 +107,28 @@ async function upsertProposal(projectId, data) {
   return prisma.proposal.create({ data: { ...data, projectId } });
 }
 
+// Find-or-create the board for a project (null projectId = the global board) + its columns.
+async function ensureBoard(projectId, name) {
+  let board = await prisma.board.findFirst({ where: { projectId } });
+  if (!board) board = await prisma.board.create({ data: { projectId, name } });
+  for (const column of DEFAULT_COLUMNS) {
+    const existing = await prisma.boardColumn.findFirst({
+      where: { boardId: board.id, position: column.position },
+    });
+    if (!existing) await prisma.boardColumn.create({ data: { ...column, boardId: board.id } });
+  }
+  return board;
+}
+
 async function upsertTask(projectId, data) {
   const existing = await prisma.task.findFirst({ where: { title: data.title, projectId, deletedAt: null } });
   if (existing) return existing;
-  return prisma.task.create({ data: { ...data, projectId } });
+  const board = await prisma.board.findFirst({ where: { projectId } });
+  const column = await prisma.boardColumn.findFirst({
+    where: { boardId: board.id, position: STATUS_POSITION[data.status] },
+  });
+  const { status: _status, ...rest } = data; // status is only the mapping key now
+  return prisma.task.create({ data: { ...rest, projectId, columnId: column.id } });
 }
 
 main()

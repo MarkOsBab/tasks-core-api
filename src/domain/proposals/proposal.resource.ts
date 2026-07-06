@@ -9,6 +9,7 @@ export function proposalResource(proposal: ProposalWithProject) {
     projectName: proposal.project && !proposal.project.deletedAt ? proposal.project.name : null,
     title: proposal.title,
     description: proposal.description,
+    link: proposal.link,
     amount: proposal.amount === null ? null : Number(proposal.amount),
     currency: proposal.currency,
     status: proposal.status,

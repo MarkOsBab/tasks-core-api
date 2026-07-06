@@ -5,12 +5,7 @@ export interface DashboardStats {
   activeProjects: number;
   pendingProposals: number;
   openTasks: number;
-  tasksByStatus: {
-    todo: number;
-    inProgress: number;
-    review: number;
-    done: number;
-  };
+  tasksByColumn: { label: string; count: number }[];
 }
 
 // Counts hit prisma directly (no repository); soft-deleted rows are already
@@ -22,24 +17,31 @@ class DashboardService {
         prisma.client.count(),
         prisma.project.count({ where: { status: 'active' } }),
         prisma.proposal.count({ where: { status: 'sent' } }),
-        prisma.task.count({ where: { status: { not: 'done' } } }),
-        prisma.task.groupBy({ by: ['status'], _count: { _all: true } }),
+        // "open" = not in a terminal (done) column, whatever it is named per board.
+        prisma.task.count({ where: { column: { isTerminal: false } } }),
+        prisma.task.groupBy({ by: ['columnId'], _count: { _all: true } }),
       ]);
 
-    const byStatus = new Map(taskGroups.map((group) => [group.status, group._count._all]));
+    // Resolve column names and aggregate by name (default columns share names across boards).
+    const columnIds = taskGroups.map((group) => group.columnId);
+    const columns = columnIds.length
+      ? await prisma.boardColumn.findMany({
+          where: { id: { in: columnIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(columns.map((column) => [column.id, column.name]));
 
-    return {
-      totalClients,
-      activeProjects,
-      pendingProposals,
-      openTasks,
-      tasksByStatus: {
-        todo: byStatus.get('todo') ?? 0,
-        inProgress: byStatus.get('in_progress') ?? 0,
-        review: byStatus.get('review') ?? 0,
-        done: byStatus.get('done') ?? 0,
-      },
-    };
+    const countsByName = new Map<string, number>();
+    for (const group of taskGroups) {
+      const label = nameById.get(group.columnId) ?? '—';
+      countsByName.set(label, (countsByName.get(label) ?? 0) + group._count._all);
+    }
+    const tasksByColumn = [...countsByName.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return { totalClients, activeProjects, pendingProposals, openTasks, tasksByColumn };
   }
 }
 

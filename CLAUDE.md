@@ -10,7 +10,8 @@ API **Next.js exclusiva** del panel `core-tasks-ui`. Next funciona **solo como A
   `pgbouncer=true`; migraciones por session pooler `:5432` vía `DIRECT_URL`).
 - **Auth: JWT HS256** con `jose` (login/me/refresh/logout stateless) + `bcryptjs`.
 - **Validación: Zod** (`parseAsync`, errores 422 shape Laravel).
-- Dominio: **clients → projects → proposals/tasks** + users (solo auth y select).
+- Dominio: **clients → projects → (boards → columnas) → proposals/tasks** + users (solo auth y
+  select). Cada project tiene un board (1:1) + hay un board global; las tasks viven en columnas.
 
 ## Comandos
 
@@ -122,7 +123,7 @@ La DB es el Supabase real. Migraciones nuevas: `npx prisma migrate dev` (crea y 
 ## Estructura
 
 ```
-app/api/                       # rutas (auth, clients, projects, proposals, tasks, users/select, dashboard)
+app/api/                       # rutas (auth, clients, projects, boards, board-columns, proposals, tasks, users/select, dashboard)
 middleware.ts                  # CORS para /api/* (CORS_ALLOWED_ORIGINS + localhost)
 src/
   lib/                         # prisma (singleton + soft-delete ext + rawExists), pagination,
@@ -131,7 +132,7 @@ src/
   resources/                   # serialize (fechas/strId) + user.resource
   domain/
     base/                      # base.repository, base.service, crud-routes
-    auth/  clients/  projects/  proposals/  tasks/  users/  dashboard/
+    auth/  clients/  projects/  boards/  board-columns/  proposals/  tasks/  users/  dashboard/
 prisma/schema.prisma  prisma/seed.mjs
 ```
 
@@ -143,12 +144,16 @@ prisma/schema.prisma  prisma/seed.mjs
 | Clients   | `/api/clients`   | `GET /api/clients/select?q=`           |
 | Projects  | `/api/projects`  | `select?q=&clientId=`; filtros clientId/status |
 | Proposals | `/api/proposals` | filtros projectId/status; sentAt auto al pasar a `sent` |
-| Tasks     | `/api/tasks`     | `POST /api/tasks/{id}/move` (status+position, reordena columna); filtros projectId/status/priority/assigneeId |
+| Boards    | `/api/boards`    | `select?q=`; filtros `projectId`/`scope=global`; 1 por proyecto + 1 global; columnas embebidas |
+| Columns   | `/api/board-columns` | filtro `boardId`; `POST /{id}/move` (reordena); `DELETE ?moveToColumnId=` (reasigna tareas antes de borrar) |
+| Tasks     | `/api/tasks`     | `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId |
 | Users     | `/api/users/select` | solo select (asignación de tareas)  |
-| Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByStatus`) |
+| Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByColumn`) |
 
-> Relaciones: un **project** pertenece a un **client**; **proposals** y **tasks** pertenecen
-> a un project; una task puede tener **assignee** (user). Enums lowercase compartidos con la
-> UI: client `active|inactive`; project `draft|active|paused|completed|archived`; proposal
-> `draft|sent|accepted|rejected`; task status `todo|in_progress|review|done`, priority
-> `low|medium|high|urgent`.
+> Relaciones: un **project** tiene un **board** (1:1) y existe un **board global** (sin project).
+> Cada board tiene **columnas** configurables (`BoardColumn`, una `isTerminal` marca "done" para el
+> dashboard). Una **task** vive en una **columna** (`columnId`; el enum `status` fue **reemplazado**),
+> con `projectId` opcional (denormalizado del board de la columna) y `assignee` (user) opcional.
+> Enums lowercase compartidos con la UI: client `active|inactive`; project
+> `draft|active|paused|completed|archived`; proposal `draft|sent|accepted|rejected`; task priority
+> `low|medium|high|urgent`. Las columnas ya **no** son un enum: se gestionan por board.

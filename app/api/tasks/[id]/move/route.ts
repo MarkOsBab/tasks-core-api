@@ -12,10 +12,10 @@ export const POST = withRoute(
   withAuth(async (req: NextRequest, ctx) => {
     const { id } = await ctx.params;
     const body = await req.json().catch(() => ({}));
-    const { status, position } = await moveTaskSchema.parseAsync(body);
+    const { columnId, position } = await moveTaskSchema.parseAsync(body);
     const existing = await taskService.find(id);
     if (!existing) throw notFound();
-    const moved = await taskService.move(existing, status, position);
+    const moved = await taskService.move(existing, columnId, position);
     return Response.json(taskResource(moved));
   }),
 );

@@ -9,7 +9,15 @@ function applyTaskFilters(filters: Record<string, string>): Record<string, unkno
     const projectId = toBigIntOrUndefined(filters.projectId);
     if (projectId !== undefined) where.projectId = projectId;
   }
-  if (filters.status) where.status = filters.status;
+  if (filters.columnId !== undefined && filters.columnId !== '') {
+    const columnId = toBigIntOrUndefined(filters.columnId);
+    if (columnId !== undefined) where.columnId = columnId;
+  }
+  // ?boardId scopes to every column of a board (the primary board-view filter).
+  if (filters.boardId !== undefined && filters.boardId !== '') {
+    const boardId = toBigIntOrUndefined(filters.boardId);
+    if (boardId !== undefined) where.column = { boardId };
+  }
   if (filters.priority) where.priority = filters.priority;
   if (filters.assigneeId !== undefined && filters.assigneeId !== '') {
     const assigneeId = toBigIntOrUndefined(filters.assigneeId);
@@ -22,15 +30,17 @@ export class TaskRepository extends BaseRepository<TaskWithRelations> {
   constructor() {
     super(prisma.task as unknown as ModelDelegate<TaskWithRelations>, {
       searchable: ['title'],
-      sortable: ['id', 'title', 'status', 'priority', 'position', 'dueDate', 'createdAt'],
-      include: { project: true, assignee: true },
+      sortable: ['id', 'title', 'priority', 'position', 'dueDate', 'createdAt'],
+      include: { column: { include: { board: true } }, project: true, assignee: true },
       applyFilters: applyTaskFilters,
     });
   }
 
-  /** Board ordering: within a project the fallback is the kanban column position. */
+  /** Board ordering: when scoped to a board/column/project the fallback is the kanban position. */
   protected defaultOrderBy(filters: Record<string, string>): OrderBy {
-    if (filters.projectId) return [{ position: 'asc' }, { id: 'desc' }];
+    if (filters.boardId || filters.columnId || filters.projectId) {
+      return [{ position: 'asc' }, { id: 'desc' }];
+    }
     return { id: 'desc' };
   }
 }

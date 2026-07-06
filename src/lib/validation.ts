@@ -6,6 +6,7 @@ export const lmsg = {
   maxString: (a: string, n: number) => `The ${a} field must not be greater than ${n} characters.`,
   selected: (a: string) => `The selected ${a} is invalid.`,
   email: (a: string) => `The ${a} field must be a valid email address.`,
+  url: (a: string) => `The ${a} field must be a valid URL.`,
   integer: (a: string) => `The ${a} field must be an integer.`,
   number: (a: string) => `The ${a} field must be a number.`,
   min: (a: string, n: number) => `The ${a} field must be at least ${n}.`,
@@ -85,4 +86,10 @@ export function nullableBool(attr: string) {
 export function nullableEmail(attr: string) {
   return z.string({ invalid_type_error: lmsg.string(attr) })
     .email(lmsg.email(attr)).nullable().optional();
+}
+
+/** nullable|url|max:n */
+export function nullableUrl(attr: string, max?: number) {
+  const base = z.string({ invalid_type_error: lmsg.string(attr) }).url(lmsg.url(attr));
+  return (max ? base.max(max, lmsg.maxString(attr, max)) : base).nullable().optional();
 }

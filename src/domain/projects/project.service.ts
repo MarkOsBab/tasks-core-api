@@ -1,4 +1,7 @@
+import type { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
+import { defaultBoardData } from '../boards/board.service';
 import { ProjectRepository, projectRepository } from './project.repository';
 import type { ProjectWithClient } from './project.types';
 
@@ -28,6 +31,19 @@ class ProjectService extends BaseService<ProjectWithClient> {
 
   selectOptions(q: string | null, clientId: string | null) {
     return this.projects.selectOptions(q, clientId);
+  }
+
+  /** A new project gets its own board (with the default columns) in the same transaction. */
+  async create(data: Record<string, unknown>): Promise<ProjectWithClient> {
+    const prepared = await this.prepare(data, null);
+    return prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: prepared as Prisma.ProjectUncheckedCreateInput,
+        include: { client: true },
+      });
+      await tx.board.create({ data: defaultBoardData(project.id) });
+      return project;
+    });
   }
 
   protected prepare(
