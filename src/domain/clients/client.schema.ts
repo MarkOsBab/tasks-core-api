@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   nullableEmail,
+  nullableHexColor,
   nullableString,
   optionalEnum,
   optionalRequiredString,
@@ -15,6 +16,7 @@ export const storeClientSchema = z.object({
   email: nullableEmail('email'),
   phone: nullableString('phone', 255),
   notes: nullableString('notes'),
+  color: nullableHexColor('color'), // omitted -> auto-assigned in the service
   status: optionalEnum('status', STATUS), // omitted -> Prisma default(active)
 });
 
@@ -26,6 +28,7 @@ export function updateClientSchema(_id: string) {
     email: nullableEmail('email'),
     phone: nullableString('phone', 255),
     notes: nullableString('notes'),
+    color: nullableHexColor('color'),
     status: optionalEnum('status', STATUS),
   });
 }

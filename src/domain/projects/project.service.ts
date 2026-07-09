@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { nextUniqueColor } from '@/lib/colors';
 import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
 import { defaultBoardData } from '../boards/board.service';
@@ -46,14 +47,19 @@ class ProjectService extends BaseService<ProjectWithClient> {
     });
   }
 
-  protected prepare(
+  protected async prepare(
     data: Record<string, unknown>,
-    _existing: ProjectWithClient | null,
-  ): Record<string, unknown> {
+    existing: ProjectWithClient | null,
+  ): Promise<Record<string, unknown>> {
     const prepared = { ...data };
     if (typeof prepared.clientId === 'string') prepared.clientId = BigInt(prepared.clientId);
     if ('startDate' in prepared) prepared.startDate = parseDateInput(prepared.startDate);
     if ('endDate' in prepared) prepared.endDate = parseDateInput(prepared.endDate);
+    if (prepared.color === '') prepared.color = null;
+    // Every project gets a unique visual color unless one is explicitly chosen.
+    if (!existing && prepared.color == null) {
+      prepared.color = nextUniqueColor(await this.projects.usedColors());
+    }
     return prepared;
   }
 }

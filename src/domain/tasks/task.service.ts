@@ -1,32 +1,61 @@
 import { prisma } from '@/lib/prisma';
+import type { AuthUser } from '@/lib/auth/context';
 import { BaseService } from '../base/base.service';
 import { TaskRepository, taskRepository } from './task.repository';
 import { parseDateInput } from './task.schema';
 import type { TaskWithRelations } from './task.types';
 
-const TASK_INCLUDE = { column: { include: { board: true } }, project: true, assignee: true } as const;
+const TASK_INCLUDE = {
+  column: { include: { board: true } },
+  project: { include: { client: true } },
+  assignee: true,
+  createdBy: true,
+  timeEntries: { where: { deletedAt: null }, include: { user: true } },
+} as const;
 
 class TaskService extends BaseService<TaskWithRelations> {
   constructor(private readonly tasks: TaskRepository) {
     super(tasks);
   }
 
+  selectOptions(q: string | null, projectId: string | null, boardId: string | null) {
+    return this.tasks.selectOptions(q, projectId, boardId);
+  }
+
   protected async prepare(
     data: Record<string, unknown>,
     existing: TaskWithRelations | null,
+    user?: AuthUser,
   ): Promise<Record<string, unknown>> {
     const prepared: Record<string, unknown> = { ...data };
+
+    // Creator is stamped once from the authed caller; updates never touch it.
+    if (!existing) prepared.createdById = user?.id ?? null;
 
     if (typeof prepared.columnId === 'string') {
       prepared.columnId = BigInt(prepared.columnId);
     }
-    // projectId is denormalized from the target column's board (null for global/standalone tasks).
+    // On the global board a task may carry an explicit projectId (visual tag by project/client).
+    const explicitProjectId =
+      'projectId' in prepared
+        ? typeof prepared.projectId === 'string' && prepared.projectId !== ''
+          ? BigInt(prepared.projectId as string)
+          : null
+        : undefined;
+    delete prepared.projectId;
+    // projectId is denormalized from the target column's board; on the global board (no board
+    // project) the explicit tag wins, and an absent key keeps the task's current tag.
     if (prepared.columnId != null) {
       const column = await prisma.boardColumn.findUnique({
         where: { id: prepared.columnId as bigint },
         include: { board: true },
       });
-      prepared.projectId = column?.board.projectId ?? null;
+      const boardProjectId = column?.board.projectId ?? null;
+      prepared.projectId =
+        boardProjectId ?? explicitProjectId ?? (existing ? existing.projectId : null);
+    } else if (explicitProjectId !== undefined && existing) {
+      const onGlobalBoard = existing.column.board.projectId == null;
+      if (onGlobalBoard) prepared.projectId = explicitProjectId;
     }
     if ('assigneeId' in prepared) {
       prepared.assigneeId =
@@ -83,7 +112,12 @@ class TaskService extends BaseService<TaskWithRelations> {
       });
       return tx.task.update({
         where: { id: existing.id },
-        data: { columnId: targetColumnId, position, projectId: target.board.projectId },
+        data: {
+          columnId: targetColumnId,
+          position,
+          // Global-board moves keep the task's explicit project tag.
+          projectId: target.board.projectId ?? existing.projectId,
+        },
         include: TASK_INCLUDE,
       });
     });

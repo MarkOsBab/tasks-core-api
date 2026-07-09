@@ -24,6 +24,13 @@ export class ProjectRepository extends BaseRepository<ProjectWithClient> {
     });
   }
 
+  /** Colors already taken (soft-deleted rows included on purpose: their color may come back). */
+  async usedColors(): Promise<Array<string | null>> {
+    const rows = await prisma.$queryRaw<Array<{ color: string | null }>>`
+      SELECT DISTINCT color FROM projects WHERE color IS NOT NULL`;
+    return rows.map((row) => row.color);
+  }
+
   /** Non-archived, optional ?clientId scope, ?q on name, ordered by name, top 50. */
   selectOptions(q: string | null, clientId: string | null): Promise<Project[]> {
     const where: Prisma.ProjectWhereInput = { status: { not: 'archived' } };

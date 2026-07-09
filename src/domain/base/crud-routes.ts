@@ -30,9 +30,9 @@ export function createHandler<T extends { id: bigint }>(
   schema: AsyncSchema,
 ): RouteHandler {
   return withRoute(
-    withAuth(async (req) => {
+    withAuth(async (req, _ctx, user) => {
       const data = await schema.parseAsync(await readBody(req));
-      const created = await service.create(data);
+      const created = await service.create(data, user);
       return Response.json(resource(created), { status: 201 });
     }),
   );
@@ -60,12 +60,12 @@ export function updateHandler<T extends { id: bigint }>(
   schemaFor: (id: string) => AsyncSchema,
 ): RouteHandler {
   return withRoute(
-    withAuth(async (req, ctx) => {
+    withAuth(async (req, ctx, user) => {
       const { id } = await ctx.params;
       const data = await schemaFor(id).parseAsync(await readBody(req));
       const existing = await service.find(id);
       if (!existing) throw notFound();
-      const updated = await service.update(existing, data);
+      const updated = await service.update(existing, data, user);
       return Response.json(resource(updated));
     }),
   );

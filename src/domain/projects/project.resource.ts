@@ -10,6 +10,7 @@ export function projectResource(project: ProjectWithClient) {
     clientName: project.client && !project.client.deletedAt ? project.client.name : null,
     name: project.name,
     description: project.description,
+    color: project.color,
     status: project.status,
     startDate: dmy(project.startDate),
     endDate: dmy(project.endDate),
@@ -17,10 +18,12 @@ export function projectResource(project: ProjectWithClient) {
   };
 }
 
-export function projectSelectResource(project: Pick<Project, 'id' | 'name' | 'clientId'>) {
+export function projectSelectResource(
+  project: Pick<Project, 'id' | 'name' | 'clientId' | 'color'>,
+) {
   return {
     label: project.name,
     value: strId(project.id),
-    data: { clientId: strId(project.clientId) },
+    data: { clientId: strId(project.clientId), color: project.color },
   };
 }

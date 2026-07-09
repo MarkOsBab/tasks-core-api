@@ -3,6 +3,7 @@ import { toBigIntOrUndefined } from '@/lib/ids';
 import { prisma } from '@/lib/prisma';
 import {
   lmsg,
+  nullableHexColor,
   nullableString,
   optionalEnum,
   optionalRequiredString,
@@ -25,6 +26,7 @@ export const storeProjectSchema = z
     clientId: reqString('clientId'),
     name: reqString('name', 255),
     description: nullableString('description'),
+    color: nullableHexColor('color'), // omitted -> unique color auto-assigned in the service
     status: reqEnum('status', PROJECT_STATUS).default('active'),
     startDate: nullableString('startDate'),
     endDate: nullableString('endDate'),
@@ -45,6 +47,7 @@ export function updateProjectSchema(_id: string) {
       clientId: optionalRequiredString('clientId'),
       name: optionalRequiredString('name', 255),
       description: nullableString('description'),
+      color: nullableHexColor('color'),
       status: optionalEnum('status', PROJECT_STATUS),
       startDate: nullableString('startDate'),
       endDate: nullableString('endDate'),

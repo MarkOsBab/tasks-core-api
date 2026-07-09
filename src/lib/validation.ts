@@ -83,6 +83,15 @@ export function nullableBool(attr: string) {
   return z.boolean({ invalid_type_error: lmsg.boolean(attr) }).nullable().optional();
 }
 
+/** nullable|hex color (#rrggbb) */
+export function nullableHexColor(attr: string) {
+  return z
+    .string({ invalid_type_error: lmsg.string(attr) })
+    .regex(/^#[0-9a-fA-F]{6}$/, `The ${attr} field must be a valid hex color.`)
+    .nullable()
+    .optional();
+}
+
 export function nullableEmail(attr: string) {
   return z.string({ invalid_type_error: lmsg.string(attr) })
     .email(lmsg.email(attr)).nullable().optional();

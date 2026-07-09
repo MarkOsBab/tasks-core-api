@@ -17,6 +17,13 @@ export class ClientRepository extends BaseRepository<Client> {
     });
   }
 
+  /** Colors already taken (soft-deleted rows included on purpose: their color may come back). */
+  async usedColors(): Promise<Array<string | null>> {
+    const rows = await prisma.$queryRaw<Array<{ color: string | null }>>`
+      SELECT DISTINCT color FROM clients WHERE color IS NOT NULL`;
+    return rows.map((row) => row.color);
+  }
+
   /** Active only, ?q on name/company (insensitive), ordered by name, top 50. */
   selectOptions(q: string | null): Promise<Client[]> {
     const where: Prisma.ClientWhereInput = q

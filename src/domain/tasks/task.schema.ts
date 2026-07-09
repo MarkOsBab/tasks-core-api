@@ -51,6 +51,14 @@ async function columnExists(id: string): Promise<boolean> {
   return column !== null;
 }
 
+// Soft-delete-aware (extension filters findFirst): trashed projects are not valid tags.
+async function projectExists(id: string): Promise<boolean> {
+  const bigId = toBigIntOrUndefined(id);
+  if (bigId === undefined) return false;
+  const project = await prisma.project.findFirst({ where: { id: bigId }, select: { id: true } });
+  return project !== null;
+}
+
 async function userExists(id: string): Promise<boolean> {
   const bigId = toBigIntOrUndefined(id);
   if (bigId === undefined) return false;
@@ -61,6 +69,9 @@ async function userExists(id: string): Promise<boolean> {
 export const storeTaskSchema = z
   .object({
     columnId: reqString('columnId'),
+    // Only honored on the global board (project boards derive it from the column); tags the
+    // card with a project/client so it can be told apart visually.
+    projectId: nullableString('projectId'),
     title: reqString('title', 255),
     description: nullableString('description'),
     priority: reqEnum('priority', TASK_PRIORITY).default('medium'),
@@ -74,6 +85,13 @@ export const storeTaskSchema = z
         path: ['columnId'],
         code: z.ZodIssueCode.custom,
         message: lmsg.selected('columnId'),
+      });
+    }
+    if (val.projectId != null && val.projectId !== '' && !(await projectExists(val.projectId))) {
+      ctx.addIssue({
+        path: ['projectId'],
+        code: z.ZodIssueCode.custom,
+        message: lmsg.selected('projectId'),
       });
     }
     if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {
@@ -90,6 +108,7 @@ export function updateTaskSchema(_id: string) {
   return z
     .object({
       columnId: optionalRequiredString('columnId'),
+      projectId: nullableString('projectId'),
       title: optionalRequiredString('title', 255),
       description: nullableString('description'),
       priority: optionalEnum('priority', TASK_PRIORITY),
@@ -103,6 +122,13 @@ export function updateTaskSchema(_id: string) {
           path: ['columnId'],
           code: z.ZodIssueCode.custom,
           message: lmsg.selected('columnId'),
+        });
+      }
+      if (val.projectId != null && val.projectId !== '' && !(await projectExists(val.projectId))) {
+        ctx.addIssue({
+          path: ['projectId'],
+          code: z.ZodIssueCode.custom,
+          message: lmsg.selected('projectId'),
         });
       }
       if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {

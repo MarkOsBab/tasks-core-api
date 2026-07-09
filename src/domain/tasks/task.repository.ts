@@ -1,3 +1,4 @@
+import type { Prisma, Task } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { toBigIntOrUndefined } from '@/lib/ids';
 import { BaseRepository, type ModelDelegate, type OrderBy } from '../base/base.repository';
@@ -31,9 +32,31 @@ export class TaskRepository extends BaseRepository<TaskWithRelations> {
     super(prisma.task as unknown as ModelDelegate<TaskWithRelations>, {
       searchable: ['title'],
       sortable: ['id', 'title', 'priority', 'position', 'dueDate', 'createdAt'],
-      include: { column: { include: { board: true } }, project: true, assignee: true },
+      // R4: nested includes bypass the soft-delete extension — filter deletedAt by hand.
+      include: {
+        column: { include: { board: true } },
+        project: { include: { client: true } },
+        assignee: true,
+        createdBy: true,
+        timeEntries: { where: { deletedAt: null }, include: { user: true } },
+      },
       applyFilters: applyTaskFilters,
     });
+  }
+
+  /** Flat options for /tasks/select (?q, ?projectId, ?boardId) — e.g. picking a task for a time entry. */
+  selectOptions(q: string | null, projectId: string | null, boardId: string | null): Promise<Task[]> {
+    const where: Prisma.TaskWhereInput = {};
+    if (projectId) {
+      const projectBigId = toBigIntOrUndefined(projectId);
+      if (projectBigId !== undefined) where.projectId = projectBigId;
+    }
+    if (boardId) {
+      const boardBigId = toBigIntOrUndefined(boardId);
+      if (boardBigId !== undefined) where.column = { boardId: boardBigId };
+    }
+    if (q) where.title = { contains: q, mode: 'insensitive' };
+    return prisma.task.findMany({ where, orderBy: { title: 'asc' }, take: 50 });
   }
 
   /** Board ordering: when scoped to a board/column/project the fallback is the kanban position. */

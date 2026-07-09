@@ -94,7 +94,7 @@ uniques con `exceptId`. Enums con `z.enum` (lowercase, idénticos a los de la UI
 
 ### R4. Soft deletes
 
-`Client/Project/Proposal/Task` usan `deleted_at`. La query extension de `src/lib/prisma.ts`
+`Client/Project/Proposal/Task/TimeEntry` usan `deleted_at`. La query extension de `src/lib/prisma.ts`
 inyecta `deletedAt: null` en reads — pero **no alcanza los include anidados**: toda relación
 eager-loaded se guarda a mano en el resource. `DELETE` = update de `deletedAt`.
 
@@ -123,7 +123,7 @@ La DB es el Supabase real. Migraciones nuevas: `npx prisma migrate dev` (crea y 
 ## Estructura
 
 ```
-app/api/                       # rutas (auth, clients, projects, boards, board-columns, proposals, tasks, users/select, dashboard)
+app/api/                       # rutas (auth, clients, projects, boards, board-columns, proposals, tasks, time-entries, users, dashboard)
 middleware.ts                  # CORS para /api/* (CORS_ALLOWED_ORIGINS + localhost)
 src/
   lib/                         # prisma (singleton + soft-delete ext + rawExists), pagination,
@@ -132,7 +132,7 @@ src/
   resources/                   # serialize (fechas/strId) + user.resource
   domain/
     base/                      # base.repository, base.service, crud-routes
-    auth/  clients/  projects/  boards/  board-columns/  proposals/  tasks/  users/  dashboard/
+    auth/  clients/  projects/  boards/  board-columns/  proposals/  tasks/  time-entries/  users/  dashboard/
 prisma/schema.prisma  prisma/seed.mjs
 ```
 
@@ -146,8 +146,9 @@ prisma/schema.prisma  prisma/seed.mjs
 | Proposals | `/api/proposals` | filtros projectId/status; sentAt auto al pasar a `sent` |
 | Boards    | `/api/boards`    | `select?q=`; filtros `projectId`/`scope=global`; 1 por proyecto + 1 global; columnas embebidas |
 | Columns   | `/api/board-columns` | filtro `boardId`; `POST /{id}/move` (reordena); `DELETE ?moveToColumnId=` (reasigna tareas antes de borrar) |
-| Tasks     | `/api/tasks`     | `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId |
-| Users     | `/api/users/select` | solo select (asignación de tareas)  |
+| Tasks     | `/api/tasks`     | `select?q=&projectId=&boardId=`; `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId |
+| Users     | `/api/users`     | CRUD **sin DELETE** (sin soft delete y con historial de tasks/time entries); password se hashea en `prepare()` y nunca sale en responses; update con password `''`/`null`/omitido = no cambiarla; email único (422); `GET /api/users/select?q=` |
+| Time entries | `/api/time-entries` | timesheet por task; filtros taskId/userId/projectId/clientId/`running=true\|false`/`startedFrom`+`startedTo` (d/m/Y o ISO; fecha sola = día completo)/`minDurationMinutes`+`maxDurationMinutes` (solo cerradas); `GET /running` (timer activo del user); `POST /api/tasks/{id}/time/start\|stop` (un timer por user: start auto-cierra el anterior) |
 | Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByColumn`) |
 
 > Relaciones: un **project** tiene un **board** (1:1) y existe un **board global** (sin project).
@@ -157,3 +158,21 @@ prisma/schema.prisma  prisma/seed.mjs
 > Enums lowercase compartidos con la UI: client `active|inactive`; project
 > `draft|active|paused|completed|archived`; proposal `draft|sent|accepted|rejected`; task priority
 > `low|medium|high|urgent`. Las columnas ya **no** son un enum: se gestionan por board.
+> Un **time entry** pertenece a una task + user (`startedAt`/`endedAt`; `endedAt` null = corriendo).
+> `TimeEntry.durationSeconds` es una **columna mantenida por el service** (create/update/start/stop;
+> null mientras corre): Prisma no puede filtrar `ended_at - started_at`, así que los filtros de
+> duración leen esa columna. El resource expone además `projectName/projectColor` y
+> `clientId/clientName/clientColor` (vía task → project → client, con guardas de soft delete R4).
+> El trackeo es **por usuario**: varios users pueden correr timers en paralelo sobre la misma task
+> (un timer activo por user; start auto-cierra el anterior del mismo user). El task resource expone
+> `trackedSeconds` (total cerrado), `firstTrackedAt`/`lastTrackedAt` (primer start / último stop
+> cerrado), `trackedByUser[]` (acumulado + running por user) y `runningEntries[]`
+> (`elapsedSeconds` al serializar). Datetimes de entrada: `d/m/Y H:i[:s]` o ISO, siempre UTC.
+> **Creador**: `Task.createdById` se estampa desde el auth user en el create (el `createHandler`
+> genérico pasa el user a `BaseService.create` → `prepare`); el resource expone
+> `createdById/createdByName` y los updates nunca lo tocan.
+> **Colores**: `Client.color` (tag personalizable) y `Project.color` (identidad visual única) se
+> auto-asignan al crear (`src/lib/colors.ts`: paleta + golden-angle). El task resource expone
+> `clientId/clientName/clientColor/projectColor`. En el **board global** una task acepta
+> `projectId` explícito (tag visual por proyecto/cliente); en boards de proyecto se deriva de la
+> columna y el move del board global preserva el tag.
