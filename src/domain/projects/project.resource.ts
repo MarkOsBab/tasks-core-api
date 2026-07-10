@@ -11,6 +11,8 @@ export function projectResource(project: ProjectWithClient) {
     name: project.name,
     description: project.description,
     color: project.color,
+    estimatedHours: project.estimatedHours === null ? null : Number(project.estimatedHours),
+    trackedSeconds: project.trackedSeconds ?? 0,
     status: project.status,
     startDate: dmy(project.startDate),
     endDate: dmy(project.endDate),

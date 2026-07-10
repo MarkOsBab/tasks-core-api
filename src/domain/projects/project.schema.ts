@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import {
   lmsg,
   nullableHexColor,
+  nullableNumber,
   nullableString,
   optionalEnum,
   optionalRequiredString,
@@ -27,6 +28,7 @@ export const storeProjectSchema = z
     name: reqString('name', 255),
     description: nullableString('description'),
     color: nullableHexColor('color'), // omitted -> unique color auto-assigned in the service
+    estimatedHours: nullableNumber('estimatedHours', 0),
     status: reqEnum('status', PROJECT_STATUS).default('active'),
     startDate: nullableString('startDate'),
     endDate: nullableString('endDate'),
@@ -48,6 +50,7 @@ export function updateProjectSchema(_id: string) {
       name: optionalRequiredString('name', 255),
       description: nullableString('description'),
       color: nullableHexColor('color'),
+      estimatedHours: nullableNumber('estimatedHours', 0),
       status: optionalEnum('status', PROJECT_STATUS),
       startDate: nullableString('startDate'),
       endDate: nullableString('endDate'),

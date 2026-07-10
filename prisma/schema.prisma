@@ -81,17 +81,18 @@ model Client {
 }
 
 model Project {
-  id          BigInt        @id @default(autoincrement())
-  clientId    BigInt        @map("client_id")
-  name        String
-  description String?       @db.Text
-  color       String?       @db.VarChar(7) // hex, unique-per-project visual identity (auto-assigned)
-  status      ProjectStatus @default(active)
-  startDate   DateTime?     @map("start_date") @db.Date
-  endDate     DateTime?     @map("end_date") @db.Date
-  createdAt   DateTime?     @default(now()) @map("created_at")
-  updatedAt   DateTime?     @updatedAt @map("updated_at")
-  deletedAt   DateTime?     @map("deleted_at")
+  id             BigInt        @id @default(autoincrement())
+  clientId       BigInt        @map("client_id")
+  name           String
+  description    String?       @db.Text
+  color          String?       @db.VarChar(7) // hex, unique-per-project visual identity (auto-assigned)
+  estimatedHours Decimal?      @map("estimated_hours") @db.Decimal(6, 2)
+  status         ProjectStatus @default(active)
+  startDate      DateTime?     @map("start_date") @db.Date
+  endDate        DateTime?     @map("end_date") @db.Date
+  createdAt      DateTime?     @default(now()) @map("created_at")
+  updatedAt      DateTime?     @updatedAt @map("updated_at")
+  deletedAt      DateTime?     @map("deleted_at")
 
   client    Client     @relation(fields: [clientId], references: [id])
   proposals Proposal[]

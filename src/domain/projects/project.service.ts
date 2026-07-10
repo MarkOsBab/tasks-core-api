@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { AuthUser } from '@/lib/auth/context';
 import { nextUniqueColor } from '@/lib/colors';
 import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
@@ -34,17 +35,49 @@ class ProjectService extends BaseService<ProjectWithClient> {
     return this.projects.selectOptions(q, clientId);
   }
 
+  async list(filters: Record<string, string>, page: number, size: number) {
+    const result = await super.list(filters, page, size);
+    await this.attachTrackedSeconds(result.items);
+    return result;
+  }
+
+  async find(id: string): Promise<ProjectWithClient | null> {
+    const project = await super.find(id);
+    if (project) await this.attachTrackedSeconds([project]);
+    return project;
+  }
+
+  async update(
+    existing: ProjectWithClient,
+    data: Record<string, unknown>,
+    user?: AuthUser,
+  ): Promise<ProjectWithClient> {
+    const updated = await super.update(existing, data, user);
+    await this.attachTrackedSeconds([updated]);
+    return updated;
+  }
+
+  private async attachTrackedSeconds(items: ProjectWithClient[]): Promise<void> {
+    if (items.length === 0) return;
+    const map = await this.projects.trackedSecondsByProjectIds(items.map((item) => item.id));
+    for (const item of items) {
+      item.trackedSeconds = map.get(item.id.toString()) ?? 0;
+    }
+  }
+
   /** A new project gets its own board (with the default columns) in the same transaction. */
   async create(data: Record<string, unknown>): Promise<ProjectWithClient> {
     const prepared = await this.prepare(data, null);
-    return prisma.$transaction(async (tx) => {
-      const project = await tx.project.create({
+    const project: ProjectWithClient = await prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
         data: prepared as Prisma.ProjectUncheckedCreateInput,
         include: { client: true },
       });
-      await tx.board.create({ data: defaultBoardData(project.id) });
-      return project;
+      await tx.board.create({ data: defaultBoardData(created.id) });
+      return created;
     });
+    project.trackedSeconds = 0;
+    return project;
   }
 
   protected async prepare(
