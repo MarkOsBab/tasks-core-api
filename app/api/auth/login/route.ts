@@ -17,7 +17,7 @@ export const POST = withRoute(async (req: NextRequest) => {
   const valid = user ? await verifyPassword(password, user.password) : false;
 
   if (!user || !valid) {
-    return Response.json({ message: 'Credenciales inválidas.' }, { status: 401 });
+    return Response.json({ message: 'Invalid credentials.' }, { status: 401 });
   }
 
   const { token, expiresIn } = await signToken(user.id);

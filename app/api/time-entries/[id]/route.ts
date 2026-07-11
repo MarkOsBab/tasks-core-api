@@ -8,4 +8,5 @@ export const dynamic = 'force-dynamic';
 
 export const GET = showHandler(timeEntryService, timeEntryResource);
 export const PUT = updateHandler(timeEntryService, timeEntryResource, updateTimeEntrySchema);
+export const PATCH = updateHandler(timeEntryService, timeEntryResource, updateTimeEntrySchema);
 export const DELETE = destroyHandler(timeEntryService);
