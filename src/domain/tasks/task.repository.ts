@@ -39,6 +39,7 @@ export class TaskRepository extends BaseRepository<TaskWithRelations> {
         assignee: true,
         createdBy: true,
         timeEntries: { where: { deletedAt: null }, include: { user: true } },
+        labels: true,
       },
       applyFilters: applyTaskFilters,
     });

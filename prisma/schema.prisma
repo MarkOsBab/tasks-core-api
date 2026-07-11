@@ -58,6 +58,7 @@ model User {
   assignedTasks Task[]      @relation("TaskAssignee")
   createdTasks  Task[]      @relation("TaskCreator")
   timeEntries   TimeEntry[] @relation("TimeEntryUser")
+  comments      Comment[]   @relation("CommentAuthor")
 
   @@map("users")
 }
@@ -142,7 +143,10 @@ model Task {
   project     Project?    @relation(fields: [projectId], references: [id])
   assignee    User?       @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   createdBy   User?       @relation("TaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  timeEntries TimeEntry[]
+  timeEntries    TimeEntry[]
+  comments       Comment[]
+  labels         Label[]
+  checklistItems ChecklistItem[]
 
   @@index([columnId, position])
   @@index([projectId])
@@ -168,6 +172,51 @@ model TimeEntry {
   @@index([userId, endedAt]) // fast lookup of a user's running timer
   @@index([startedAt]) // tracking-date filters + default timesheet order
   @@map("time_entries")
+}
+
+model Comment {
+  id        BigInt    @id @default(autoincrement())
+  taskId    BigInt    @map("task_id")
+  userId    BigInt    @map("user_id") // author, stamped from the auth user on create
+  body      String    @db.Text
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  task Task @relation(fields: [taskId], references: [id])
+  user User @relation("CommentAuthor", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@map("comments")
+}
+
+model Label {
+  id        BigInt    @id @default(autoincrement())
+  name      String
+  color     String?   @db.VarChar(7) // hex tag color; auto-assigned on create, user-customizable
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  tasks Task[] // implicit m2m; Prisma manages the _LabelToTask pivot
+
+  @@map("labels")
+}
+
+model ChecklistItem {
+  id        BigInt    @id @default(autoincrement())
+  taskId    BigInt    @map("task_id")
+  title     String
+  done      Boolean   @default(false)
+  position  Int       @default(0)
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  task Task @relation(fields: [taskId], references: [id])
+
+  @@index([taskId, position])
+  @@map("checklist_items")
 }
 
 model Board {

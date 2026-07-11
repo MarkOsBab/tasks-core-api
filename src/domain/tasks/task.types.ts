@@ -7,5 +7,6 @@ export type TaskWithRelations = Prisma.TaskGetPayload<{
     assignee: true;
     createdBy: true;
     timeEntries: { include: { user: true } };
+    labels: true;
   };
 }>;

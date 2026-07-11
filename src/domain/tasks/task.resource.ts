@@ -77,6 +77,10 @@ export function taskResource(task: TaskWithRelations) {
     clientId: client ? strId(client.id) : null,
     clientName: client?.name ?? null,
     clientColor: client?.color ?? null,
+    // R4: the implicit m2m pivot does not filter soft-deletes — drop trashed labels by hand.
+    labels: task.labels
+      .filter((label) => !label.deletedAt)
+      .map((label) => ({ id: strId(label.id), name: label.name, color: label.color })),
     title: task.title,
     description: task.description,
     priority: task.priority,

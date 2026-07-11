@@ -78,6 +78,7 @@ export const storeTaskSchema = z
     position: nullableInt('position', 0),
     dueDate: nullableDate('dueDate'),
     assigneeId: nullableString('assigneeId'),
+    labelIds: z.array(z.string()).nullable().optional(),
   })
   .superRefine(async (val, ctx) => {
     if (!(await columnExists(val.columnId))) {
@@ -115,6 +116,7 @@ export function updateTaskSchema(_id: string) {
       position: nullableInt('position', 0),
       dueDate: nullableDate('dueDate'),
       assigneeId: nullableString('assigneeId'),
+      labelIds: z.array(z.string()).nullable().optional(),
     })
     .superRefine(async (val, ctx) => {
       if (val.columnId !== undefined && !(await columnExists(val.columnId))) {

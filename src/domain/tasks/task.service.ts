@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma';
+import { unprocessable } from '@/lib/http-error';
+import { toBigIntOrUndefined } from '@/lib/ids';
 import type { AuthUser } from '@/lib/auth/context';
 import { BaseService } from '../base/base.service';
 import { TaskRepository, taskRepository } from './task.repository';
@@ -11,7 +13,20 @@ const TASK_INCLUDE = {
   assignee: true,
   createdBy: true,
   timeEntries: { where: { deletedAt: null }, include: { user: true } },
+  labels: true,
 } as const;
+
+/**
+ * A column's WIP limit caps how many live tasks it may hold. `null` / `<= 0` means "no limit".
+ * `occupancy` must already exclude the task being placed, so reorders within a column never trip it.
+ */
+function assertColumnCapacity(wipLimit: number | null, occupancy: number): void {
+  if (wipLimit != null && wipLimit > 0 && occupancy >= wipLimit) {
+    throw unprocessable('The column has reached its WIP limit.', {
+      columnId: [`This column allows at most ${wipLimit} task(s).`],
+    });
+  }
+}
 
 class TaskService extends BaseService<TaskWithRelations> {
   constructor(private readonly tasks: TaskRepository) {
@@ -50,6 +65,19 @@ class TaskService extends BaseService<TaskWithRelations> {
         where: { id: prepared.columnId as bigint },
         include: { board: true },
       });
+      // Enforce the target column's WIP limit when a task first lands there (create) or is moved
+      // in from another column via the modal edit; reorders within the same column are exempt.
+      const enteringColumn = !existing || existing.columnId !== prepared.columnId;
+      if (column && enteringColumn) {
+        const occupancy = await prisma.task.count({
+          where: {
+            columnId: prepared.columnId as bigint,
+            deletedAt: null,
+            ...(existing ? { id: { not: existing.id } } : {}),
+          },
+        });
+        assertColumnCapacity(column.wipLimit, occupancy);
+      }
       const boardProjectId = column?.board.projectId ?? null;
       prepared.projectId =
         boardProjectId ?? explicitProjectId ?? (existing ? existing.projectId : null);
@@ -79,6 +107,15 @@ class TaskService extends BaseService<TaskWithRelations> {
         });
       }
     }
+    // labelIds -> implicit-m2m write: connect on create, set (full replace) on update.
+    if ('labelIds' in prepared) {
+      const ids = (Array.isArray(prepared.labelIds) ? (prepared.labelIds as string[]) : [])
+        .map((id) => toBigIntOrUndefined(id))
+        .filter((id): id is bigint => id !== undefined)
+        .map((id) => ({ id }));
+      delete prepared.labelIds;
+      prepared.labels = existing ? { set: ids } : { connect: ids };
+    }
     return prepared;
   }
 
@@ -91,6 +128,14 @@ class TaskService extends BaseService<TaskWithRelations> {
         where: { id: targetColumnId },
         include: { board: true },
       });
+      // Enforce the destination column's WIP limit, but only when the card crosses columns:
+      // a reorder within the same column adds nothing. Inside the tx, so a rejection rolls back.
+      if (targetColumnId !== existing.columnId) {
+        const occupancy = await tx.task.count({
+          where: { columnId: targetColumnId, deletedAt: null, id: { not: existing.id } },
+        });
+        assertColumnCapacity(target.wipLimit, occupancy);
+      }
       // Writes bypass the soft-delete read extension, so filter deletedAt by hand.
       await tx.task.updateMany({
         where: {
