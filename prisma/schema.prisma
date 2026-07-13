@@ -60,6 +60,9 @@ model User {
   timeEntries   TimeEntry[] @relation("TimeEntryUser")
   comments      Comment[]   @relation("CommentAuthor")
 
+  notifications          Notification[] @relation("NotificationRecipient")
+  triggeredNotifications Notification[] @relation("NotificationActor")
+
   @@map("users")
 }
 
@@ -147,6 +150,7 @@ model Task {
   comments       Comment[]
   labels         Label[]
   checklistItems ChecklistItem[]
+  notifications  Notification[]
 
   @@index([columnId, position])
   @@index([projectId])
@@ -217,6 +221,31 @@ model ChecklistItem {
 
   @@index([taskId, position])
   @@map("checklist_items")
+}
+
+// In-app + email notifications. NOT soft-deleted (ephemeral feed; read/dismiss instead of trash),
+// so it is intentionally left out of SOFT_DELETE_MODELS. Actor/task fields are snapshotted
+// (actorName/taskTitle) so the feed stays intact even if the task or actor later changes/vanishes.
+model Notification {
+  id        BigInt    @id @default(autoincrement())
+  userId    BigInt    @map("user_id") // recipient
+  type      String    @db.VarChar(50) // 'task_assigned' | 'comment_added'
+  actorId   BigInt?   @map("actor_id") // who triggered it (nullable; SetNull on user delete)
+  actorName String?   @map("actor_name") // snapshot of the actor's display name
+  taskId    BigInt?   @map("task_id")
+  taskTitle String?   @map("task_title") // snapshot of the task title at emit time
+  link      String?   @db.Text // in-app deep link (e.g. /board?task=123)
+  readAt    DateTime? @map("read_at") // null = unread
+  emailedAt DateTime? @map("emailed_at") // when the email went out (null = not emailed)
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  user  User  @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  task  Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt]) // unread-count + inbox scans
+  @@map("notifications")
 }
 
 model Board {

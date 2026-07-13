@@ -19,6 +19,7 @@
     "seed": "node prisma/seed.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1085.0",
     "@prisma/client": "^6.2.1",
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.6",

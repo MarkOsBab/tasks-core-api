@@ -3,6 +3,7 @@ import { unprocessable } from '@/lib/http-error';
 import { toBigIntOrUndefined } from '@/lib/ids';
 import type { AuthUser } from '@/lib/auth/context';
 import { BaseService } from '../base/base.service';
+import { buildTaskLink, notificationService } from '../notifications/notification.service';
 import { TaskRepository, taskRepository } from './task.repository';
 import { parseDateInput } from './task.schema';
 import type { TaskWithRelations } from './task.types';
@@ -35,6 +36,53 @@ class TaskService extends BaseService<TaskWithRelations> {
 
   selectOptions(q: string | null, projectId: string | null, boardId: string | null) {
     return this.tasks.selectOptions(q, projectId, boardId);
+  }
+
+  async create(data: Record<string, unknown>, user?: AuthUser): Promise<TaskWithRelations> {
+    const created = await super.create(data, user);
+    await this.notifyAssignment(created, null, user);
+    return created;
+  }
+
+  async update(
+    existing: TaskWithRelations,
+    data: Record<string, unknown>,
+    user?: AuthUser,
+  ): Promise<TaskWithRelations> {
+    const updated = await super.update(existing, data, user);
+    await this.notifyAssignment(updated, existing, user);
+    return updated;
+  }
+
+  /** Notifies the assignee when a task first lands on them or is reassigned; never on self-assign. */
+  private async notifyAssignment(
+    task: TaskWithRelations,
+    existing: TaskWithRelations | null,
+    actor?: AuthUser,
+  ): Promise<void> {
+    const assigneeId = task.assigneeId;
+    if (assigneeId == null) return;
+    if (existing && existing.assigneeId === assigneeId) return; // assignee unchanged
+    if (actor && assigneeId === actor.id) return; // self-assign
+    try {
+      await notificationService.notify({
+        userId: assigneeId,
+        type: 'task_assigned',
+        actorId: actor?.id ?? null,
+        actorName: await this.resolveUserName(actor?.id),
+        taskId: task.id,
+        taskTitle: task.title,
+        link: buildTaskLink(task),
+      });
+    } catch (err) {
+      console.error('[tasks] assignment notification failed:', err);
+    }
+  }
+
+  private async resolveUserName(id?: bigint | null): Promise<string | null> {
+    if (id == null) return null;
+    const u = await prisma.user.findUnique({ where: { id }, select: { name: true, lastName: true } });
+    return u ? `${u.name} ${u.lastName ?? ''}`.trim() : null;
   }
 
   protected async prepare(
