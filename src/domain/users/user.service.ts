@@ -1,6 +1,7 @@
 import type { User } from '@prisma/client';
 import type { AuthUser } from '@/lib/auth/context';
 import { hashPassword } from '@/lib/auth/password';
+import { prisma } from '@/lib/prisma';
 import { passwordResetService } from '../auth/password-reset.service';
 import { BaseService } from '../base/base.service';
 import { UserRepository, userRepository } from './user.repository';
@@ -21,6 +22,20 @@ class UserService extends BaseService<User> {
     const created = await super.create(data, user);
     await passwordResetService.sendInvite(created);
     return created;
+  }
+
+  // Soft delete with an email tombstone: `email` is unique in the DB (and rawExists counts
+  // soft-deleted rows), so renaming to deleted.{id}.{email} frees the address for a future
+  // re-create. Any live set-password token is burned in the same transaction.
+  override async delete(existing: User): Promise<boolean> {
+    await prisma.$transaction([
+      prisma.passwordResetToken.deleteMany({ where: { userId: existing.id } }),
+      prisma.user.update({
+        where: { id: existing.id },
+        data: { deletedAt: new Date(), email: `deleted.${existing.id}.${existing.email}` },
+      }),
+    ]);
+    return true;
   }
 
   protected async prepare(
