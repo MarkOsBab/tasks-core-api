@@ -11,7 +11,7 @@ function resolveAllowedOrigin(origin: string | null): string | null {
   if (!origin) return null;
   const allowList = (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')
-    .map((value) => value.trim())
+    .map((value) => value.trim().replace(/\/+$/, ''))
     .filter(Boolean);
   if (allowList.includes(origin) || LOCALHOST_PATTERN.test(origin)) {
     return origin;
