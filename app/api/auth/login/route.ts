@@ -14,7 +14,8 @@ export const POST = withRoute(async (req: NextRequest) => {
   const { email, password } = loginSchema.parse(body);
 
   const user = await prisma.user.findUnique({ where: { email } });
-  const valid = user ? await verifyPassword(password, user.password) : false;
+  // password null = invited user that never set one: same 401 as bad credentials.
+  const valid = user?.password ? await verifyPassword(password, user.password) : false;
 
   if (!user || !valid) {
     return Response.json({ message: 'Invalid credentials.' }, { status: 401 });

@@ -15,12 +15,13 @@ function uniqueEmail(exceptId?: bigint) {
   };
 }
 
+// No password on create: the user gets an invite email with a set-password link instead
+// (see UserService.create → passwordResetService.sendInvite).
 export const storeUserSchema = z
   .object({
     name: reqString('name', 255),
     lastName: nullableString('lastName', 255),
     email: reqString('email', 255).email(lmsg.email('email')),
-    password: reqString('password').min(PASSWORD_MIN, passwordMinMsg),
     image: nullableString('image', 2048),
   })
   .superRefine(uniqueEmail());

@@ -62,6 +62,11 @@ el schema de Prisma con `@map`. Los filtros de query también llegan **camelCase
 
 - `POST /api/auth/login` `{ email, password }` → `{ token, token_type, expires_in, user }`.
 - `GET /api/auth/me`, `POST /api/auth/refresh` (ventana anclada al `iat`), `POST /api/auth/logout`.
+- `POST /api/auth/forgot-password` `{ email }` → **siempre 200** (sin user enumeration); si el
+  email existe manda link `${APP_WEB_URL}/reset-password?token=...` (token single-use, sha256 en
+  DB — tabla `password_reset_tokens`, TTL `PASSWORD_RESET_TTL` min, default 60).
+- `POST /api/auth/reset-password` `{ token, password }` → setea la password y quema el token
+  (422 si inválido/expirado/usado). Lo usan tanto el forgot como el invite de usuarios nuevos.
 - Todo lo demás exige `Authorization: Bearer` → 401 `{ "message": "Unauthenticated." }`.
 
 ### 6. Errores
@@ -106,8 +111,8 @@ propia y schema Zod dedicado. Mutaciones multi-fila en `$transaction`.
 
 ### R6. Auth en toda ruta nueva
 
-`withRoute(withAuth(handler))` — el user llega como 3er parámetro. Solo `auth/login` y
-`auth/refresh` quedan públicas.
+`withRoute(withAuth(handler))` — el user llega como 3er parámetro. Solo `auth/login`,
+`auth/refresh`, `auth/forgot-password` y `auth/reset-password` quedan públicas.
 
 ### R7. Todo en inglés
 
@@ -148,7 +153,7 @@ prisma/schema.prisma  prisma/seed.mjs
 | Boards    | `/api/boards`    | `select?q=`; filtro `scope=global`; **solo existe el board global** (los boards por proyecto se eliminaron en la migración `single_global_board`; los projects ya no crean board); columnas embebidas |
 | Columns   | `/api/board-columns` | filtro `boardId`; `POST /{id}/move` (reordena); `DELETE ?moveToColumnId=` (reasigna tareas antes de borrar) |
 | Tasks     | `/api/tasks`     | `select?q=&projectId=&boardId=`; `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId/clientId (vía project)/labelIds (CSV, some-in)/`search` (título) |
-| Users     | `/api/users`     | CRUD **sin DELETE** (sin soft delete y con historial de tasks/time entries); password se hashea en `prepare()` y nunca sale en responses; update con password `''`/`null`/omitido = no cambiarla; email único (422); `GET /api/users/select?q=` |
+| Users     | `/api/users`     | CRUD **sin DELETE** (sin soft delete y con historial de tasks/time entries); el **create no acepta password** (`User.password` nullable): el service manda email de invitación con link set-password (token `PASSWORD_INVITE_TTL` min, default 7 días; best-effort — sin SES loguea el link en consola) y el login rechaza users sin password; update con password `''`/`null`/omitido = no cambiarla (se hashea en `prepare()`, nunca sale en responses); email único (422); `GET /api/users/select?q=` |
 | Time entries | `/api/time-entries` | timesheet por task; filtros taskId/userId/projectId/clientId/`running=true\|false`/`startedFrom`+`startedTo` (d/m/Y o ISO; fecha sola = día completo)/`minDurationMinutes`+`maxDurationMinutes` (solo cerradas); `GET /running` (timer activo del user); `POST /api/tasks/{id}/time/start\|stop` (un timer por user: start auto-cierra el anterior) |
 | Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByColumn`) |
 
