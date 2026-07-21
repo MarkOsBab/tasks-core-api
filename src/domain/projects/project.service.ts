@@ -1,9 +1,6 @@
-import type { Prisma } from '@prisma/client';
 import type { AuthUser } from '@/lib/auth/context';
 import { nextUniqueColor } from '@/lib/colors';
-import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
-import { defaultBoardData } from '../boards/board.service';
 import { ProjectRepository, projectRepository } from './project.repository';
 import type { ProjectWithClient } from './project.types';
 
@@ -65,17 +62,10 @@ class ProjectService extends BaseService<ProjectWithClient> {
     }
   }
 
-  /** A new project gets its own board (with the default columns) in the same transaction. */
+  /** Single-board model: projects no longer get a board of their own (all tasks live on the
+   * global board, tagged with a projectId). */
   async create(data: Record<string, unknown>): Promise<ProjectWithClient> {
-    const prepared = await this.prepare(data, null);
-    const project: ProjectWithClient = await prisma.$transaction(async (tx) => {
-      const created = await tx.project.create({
-        data: prepared as Prisma.ProjectUncheckedCreateInput,
-        include: { client: true },
-      });
-      await tx.board.create({ data: defaultBoardData(created.id) });
-      return created;
-    });
+    const project = await super.create(data);
     project.trackedSeconds = 0;
     return project;
   }

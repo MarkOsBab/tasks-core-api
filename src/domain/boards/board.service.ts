@@ -1,4 +1,3 @@
-import type { Prisma } from '@prisma/client';
 import { unprocessable } from '@/lib/http-error';
 import { prisma } from '@/lib/prisma';
 import { BaseService } from '../base/base.service';
@@ -12,22 +11,6 @@ export const DEFAULT_BOARD_COLUMNS = [
   { name: 'En revisión', position: 2, color: '#8b5cf6', isTerminal: false },
   { name: 'Terminada', position: 3, color: '#22c55e', isTerminal: true },
 ] as const;
-
-/** Prisma create payload for a project board with its default columns (reused by ProjectService). */
-export function defaultBoardData(projectId: bigint): Prisma.BoardUncheckedCreateInput {
-  return {
-    projectId,
-    name: 'Tablero',
-    columns: {
-      create: DEFAULT_BOARD_COLUMNS.map((c) => ({
-        name: c.name,
-        position: c.position,
-        color: c.color,
-        isTerminal: c.isTerminal,
-      })),
-    },
-  };
-}
 
 class BoardService extends BaseService<BoardWithRelations> {
   constructor(private readonly boards: BoardRepository) {

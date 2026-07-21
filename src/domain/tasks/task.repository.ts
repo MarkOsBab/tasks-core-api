@@ -19,10 +19,23 @@ function applyTaskFilters(filters: Record<string, string>): Record<string, unkno
     const boardId = toBigIntOrUndefined(filters.boardId);
     if (boardId !== undefined) where.column = { boardId };
   }
+  // ?clientId reaches through the project tag (tasks without a project never match).
+  if (filters.clientId !== undefined && filters.clientId !== '') {
+    const clientId = toBigIntOrUndefined(filters.clientId);
+    if (clientId !== undefined) where.project = { clientId };
+  }
   if (filters.priority) where.priority = filters.priority;
   if (filters.assigneeId !== undefined && filters.assigneeId !== '') {
     const assigneeId = toBigIntOrUndefined(filters.assigneeId);
     if (assigneeId !== undefined) where.assigneeId = assigneeId;
+  }
+  // ?labelIds=1,2 -> tasks holding at least one of those labels.
+  if (filters.labelIds !== undefined && filters.labelIds !== '') {
+    const labelIds = filters.labelIds
+      .split(',')
+      .map((id) => toBigIntOrUndefined(id.trim()))
+      .filter((id): id is bigint => id !== undefined);
+    if (labelIds.length > 0) where.labels = { some: { id: { in: labelIds } } };
   }
   return where;
 }

@@ -55,10 +55,8 @@ async function main() {
     status: 'draft',
   });
 
-  // One board (with the default columns) per project + the single global board.
-  await ensureBoard(website.id, 'Tablero');
-  await ensureBoard(app.id, 'Tablero');
-  await ensureBoard(null, 'Tablero global');
+  // Single-board model: only the global board exists; tasks carry a projectId tag.
+  const globalBoard = await ensureBoard(null, 'Tablero global');
 
   await upsertProposal(website.id, {
     title: 'Website redesign — phase 1',
@@ -83,7 +81,7 @@ async function main() {
     { title: 'QA checklist', status: 'review', priority: 'medium', position: 0, assigneeId: admin.id },
   ];
   for (const t of tasks) {
-    await upsertTask(website.id, t);
+    await upsertTask(globalBoard.id, website.id, t);
   }
 
   console.log('Seed OK');
@@ -120,12 +118,11 @@ async function ensureBoard(projectId, name) {
   return board;
 }
 
-async function upsertTask(projectId, data) {
+async function upsertTask(boardId, projectId, data) {
   const existing = await prisma.task.findFirst({ where: { title: data.title, projectId, deletedAt: null } });
   if (existing) return existing;
-  const board = await prisma.board.findFirst({ where: { projectId } });
   const column = await prisma.boardColumn.findFirst({
-    where: { boardId: board.id, position: STATUS_POSITION[data.status] },
+    where: { boardId, position: STATUS_POSITION[data.status] },
   });
   const { status: _status, ...rest } = data; // status is only the mapping key now
   return prisma.task.create({ data: { ...rest, projectId, columnId: column.id } });

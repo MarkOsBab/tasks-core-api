@@ -10,8 +10,9 @@ API **Next.js exclusiva** del panel `core-tasks-ui`. Next funciona **solo como A
   `pgbouncer=true`; migraciones por session pooler `:5432` vía `DIRECT_URL`).
 - **Auth: JWT HS256** con `jose` (login/me/refresh/logout stateless) + `bcryptjs`.
 - **Validación: Zod** (`parseAsync`, errores 422 shape Laravel).
-- Dominio: **clients → projects → (boards → columnas) → proposals/tasks** + users (solo auth y
-  select). Cada project tiene un board (1:1) + hay un board global; las tasks viven en columnas.
+- Dominio: **clients → projects → proposals/tasks** + users (solo auth y select). **Modelo de
+  tablero único**: existe solo el board global (sin project) con sus columnas; toda task vive ahí
+  con `projectId` opcional como tag (la vista por proyecto es el mismo board filtrado).
 
 ## Comandos
 
@@ -144,17 +145,18 @@ prisma/schema.prisma  prisma/seed.mjs
 | Clients   | `/api/clients`   | `GET /api/clients/select?q=`           |
 | Projects  | `/api/projects`  | `select?q=&clientId=`; filtros clientId/status |
 | Proposals | `/api/proposals` | filtros projectId/status; sentAt auto al pasar a `sent` |
-| Boards    | `/api/boards`    | `select?q=`; filtros `projectId`/`scope=global`; 1 por proyecto + 1 global; columnas embebidas |
+| Boards    | `/api/boards`    | `select?q=`; filtro `scope=global`; **solo existe el board global** (los boards por proyecto se eliminaron en la migración `single_global_board`; los projects ya no crean board); columnas embebidas |
 | Columns   | `/api/board-columns` | filtro `boardId`; `POST /{id}/move` (reordena); `DELETE ?moveToColumnId=` (reasigna tareas antes de borrar) |
-| Tasks     | `/api/tasks`     | `select?q=&projectId=&boardId=`; `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId |
+| Tasks     | `/api/tasks`     | `select?q=&projectId=&boardId=`; `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); filtros projectId/boardId/columnId/priority/assigneeId/clientId (vía project)/labelIds (CSV, some-in)/`search` (título) |
 | Users     | `/api/users`     | CRUD **sin DELETE** (sin soft delete y con historial de tasks/time entries); password se hashea en `prepare()` y nunca sale en responses; update con password `''`/`null`/omitido = no cambiarla; email único (422); `GET /api/users/select?q=` |
 | Time entries | `/api/time-entries` | timesheet por task; filtros taskId/userId/projectId/clientId/`running=true\|false`/`startedFrom`+`startedTo` (d/m/Y o ISO; fecha sola = día completo)/`minDurationMinutes`+`maxDurationMinutes` (solo cerradas); `GET /running` (timer activo del user); `POST /api/tasks/{id}/time/start\|stop` (un timer por user: start auto-cierra el anterior) |
 | Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByColumn`) |
 
-> Relaciones: un **project** tiene un **board** (1:1) y existe un **board global** (sin project).
-> Cada board tiene **columnas** configurables (`BoardColumn`, una `isTerminal` marca "done" para el
-> dashboard). Una **task** vive en una **columna** (`columnId`; el enum `status` fue **reemplazado**),
-> con `projectId` opcional (denormalizado del board de la columna) y `assignee` (user) opcional.
+> Relaciones: existe **un único board** (el global, sin project; el schema conserva
+> `Board.projectId` nullable pero ya no se crean boards por proyecto). El board tiene **columnas**
+> configurables (`BoardColumn`, una `isTerminal` marca "done" para el dashboard). Una **task** vive
+> en una **columna** (`columnId`; el enum `status` fue **reemplazado**), con `projectId` opcional
+> (tag visual por proyecto/cliente) y `assignee` (user) opcional.
 > Enums lowercase compartidos con la UI: client `active|inactive`; project
 > `draft|active|paused|completed|archived`; proposal `draft|sent|accepted|rejected`; task priority
 > `low|medium|high|urgent`. Las columnas ya **no** son un enum: se gestionan por board.
@@ -173,6 +175,5 @@ prisma/schema.prisma  prisma/seed.mjs
 > `createdById/createdByName` y los updates nunca lo tocan.
 > **Colores**: `Client.color` (tag personalizable) y `Project.color` (identidad visual única) se
 > auto-asignan al crear (`src/lib/colors.ts`: paleta + golden-angle). El task resource expone
-> `clientId/clientName/clientColor/projectColor`. En el **board global** una task acepta
-> `projectId` explícito (tag visual por proyecto/cliente); en boards de proyecto se deriva de la
-> columna y el move del board global preserva el tag.
+> `clientId/clientName/clientColor/projectColor`. Una task acepta `projectId` explícito (tag
+> visual por proyecto/cliente) y el move preserva el tag.
