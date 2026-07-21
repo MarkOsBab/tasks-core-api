@@ -54,6 +54,7 @@ model User {
   image     String?
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at") // soft delete: history (tasks/time entries) keeps pointing here
 
   assignedTasks Task[]      @relation("TaskAssignee")
   createdTasks  Task[]      @relation("TaskCreator")

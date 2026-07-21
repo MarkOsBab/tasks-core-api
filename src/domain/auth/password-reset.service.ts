@@ -17,7 +17,7 @@ class PasswordResetService {
   /** Forgot-password entrypoint. Silently no-ops on unknown emails (no user enumeration). */
   async requestReset(email: string): Promise<void> {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return;
+    if (!user || user.deletedAt) return; // findUnique bypasses the soft-delete extension
     try {
       await this.issueAndSend(user, 'reset');
     } catch (err) {
@@ -34,6 +34,15 @@ class PasswordResetService {
     } catch (err) {
       console.error('[auth] invite email delivery failed:', err);
     }
+  }
+
+  /**
+   * Panel-triggered reset (users/{id}/reset-password): re-invites if the user never set a
+   * password, plain reset otherwise. Unlike the public flows this one THROWS on delivery
+   * failure — the admin clicked a button and deserves to know the email did not go out.
+   */
+  async sendPanelReset(user: User): Promise<void> {
+    await this.issueAndSend(user, user.password ? 'reset' : 'invite');
   }
 
   /** Redeems a token: sets the new password and burns the token. 422 on invalid/expired/used. */

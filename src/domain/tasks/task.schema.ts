@@ -62,7 +62,8 @@ async function projectExists(id: string): Promise<boolean> {
 async function userExists(id: string): Promise<boolean> {
   const bigId = toBigIntOrUndefined(id);
   if (bigId === undefined) return false;
-  const user = await prisma.user.findUnique({ where: { id: bigId }, select: { id: true } });
+  // findFirst (not findUnique) so the soft-delete extension hides deleted users.
+  const user = await prisma.user.findFirst({ where: { id: bigId }, select: { id: true } });
   return user !== null;
 }
 

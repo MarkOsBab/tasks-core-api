@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic';
 export const GET = withRoute(
   withAuth(async (_req, _ctx, user) => {
     const full = await prisma.user.findUnique({ where: { id: user.id } });
-    if (!full) throw unauthorized();
+    // findUnique bypasses the soft-delete extension: a deleted user's live JWT stops here.
+    if (!full || full.deletedAt) throw unauthorized();
     return Response.json(userResource(full));
   }),
 );
