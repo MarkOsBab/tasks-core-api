@@ -9,6 +9,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     setupFiles: ['tests/setup.ts'],
+    mockReset: true,
     restoreMocks: true,
     unstubEnvs: true,
     coverage: {
@@ -31,9 +32,14 @@ export default defineConfig({
         'src/lib/html-text.ts',
         'src/lib/colors.ts',
       ],
-      // CI gate (>=80% over the P1 set) — enable in task #31 once the P1 modules have
-      // their tests; today it would fail by construction.
-      // thresholds: { statements: 80, branches: 80 },
+      // CI gate: >=80% over the P1 modules (docs/unit-testing-scope.md). P2 modules have
+      // per-module objectives but no gate yet.
+      thresholds: {
+        'src/lib/auth/**/*.ts': { statements: 80, branches: 80, functions: 80, lines: 80 },
+        'src/domain/auth/**/*.ts': { statements: 80, branches: 80, functions: 80, lines: 80 },
+        'src/domain/oauth/**/*.ts': { statements: 80, branches: 80, functions: 80, lines: 80 },
+        'src/domain/tasks/**/*.ts': { statements: 80, branches: 75, functions: 80, lines: 80 },
+      },
     },
   },
 });

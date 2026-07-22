@@ -37,7 +37,8 @@ determinista y las dependencias externas se mockean (`tests/helpers/prisma-mock.
 Prisma; SES/OpenAI/Supabase con `vi.mock` por test). Los tests viven en `tests/`
 espejando `src/` (`tests/lib/auth/jwt.test.ts` cubre `src/lib/auth/jwt.ts`). Solo hace
 falta `npm install` previo — no requieren `.env` ni servicios levantados. CI
-(`.github/workflows/ci.yml`) corre typecheck + tests en cada push/PR a `main`.
+(`.github/workflows/ci.yml`) corre typecheck + tests con coverage en cada push/PR a
+`main`, con gate ≥80% sobre los módulos P1 del alcance.
 
 Contrato, reglas y estructura: ver [CLAUDE.md](CLAUDE.md).
 Alcance de tests unitarios: ver [docs/unit-testing-scope.md](docs/unit-testing-scope.md).

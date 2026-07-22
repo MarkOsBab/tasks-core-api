@@ -1,5 +1,6 @@
+import { SignJWT } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { refreshToken, signToken, verifyToken } from '@/lib/auth/jwt';
+import { refreshToken, signMcpToken, signToken, verifyToken } from '@/lib/auth/jwt';
 
 // Time-sensitive specs use fake timers (jose reads `Date`), so TTLs are exercised
 // deterministically without waiting.
@@ -28,6 +29,14 @@ describe('signToken / verifyToken', () => {
     const { token } = await signToken('1');
     vi.setSystemTime(new Date('2026-01-01T01:01:00Z')); // past the 60 min TTL
     await expect(verifyToken(token)).rejects.toThrow();
+  });
+});
+
+describe('signMcpToken', () => {
+  it('issues a long-lived token the regular verify accepts', async () => {
+    const issued = await signMcpToken(9n);
+    expect(issued.expiresIn).toBe(129600 * 60); // MCP_TOKEN_TTL default: 90 days
+    await expect(verifyToken(issued.token)).resolves.toEqual({ sub: '9' });
   });
 });
 
@@ -67,5 +76,23 @@ describe('refreshToken', () => {
 
   it('rejects a token with an invalid signature', async () => {
     await expect(refreshToken('not-a-jwt')).rejects.toThrow('Invalid token signature');
+  });
+
+  it('rejects tokens not signed with HS256', async () => {
+    const secret = new TextEncoder().encode(process.env['JWT_SECRET']);
+    const hs384 = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS384' })
+      .setSubject('7')
+      .setIssuedAt()
+      .sign(secret);
+    await expect(refreshToken(hs384)).rejects.toThrow('Unexpected token algorithm');
+  });
+
+  it('rejects tokens missing subject or iat', async () => {
+    const secret = new TextEncoder().encode(process.env['JWT_SECRET']);
+    const noSub = await new SignJWT({}).setProtectedHeader({ alg: 'HS256' }).setIssuedAt().sign(secret);
+    await expect(refreshToken(noSub)).rejects.toThrow('Token missing subject');
+    const noIat = await new SignJWT({}).setProtectedHeader({ alg: 'HS256' }).setSubject('7').sign(secret);
+    await expect(refreshToken(noIat)).rejects.toThrow('Token missing iat');
   });
 });
