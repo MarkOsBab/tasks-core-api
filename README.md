@@ -28,3 +28,4 @@ comentadas en `.env.example`.
 | `npm run db:seed` | seed idempotente |
 
 Contrato, reglas y estructura: ver [CLAUDE.md](CLAUDE.md).
+Alcance de tests unitarios: ver [docs/unit-testing-scope.md](docs/unit-testing-scope.md).
