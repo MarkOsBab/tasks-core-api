@@ -1,11 +1,17 @@
-import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import type { SESv2Client } from '@aws-sdk/client-sesv2';
 import { env, optionalEnv } from './env';
 
-// Lazy SES client. Credentials are resolved by the AWS SDK default chain: the shared
-// ~/.aws/credentials profile locally, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in production.
+// Lazy SES client. The `@aws-sdk/client-sesv2` module (~several MB) is `import()`-ed on first
+// send, NOT at module load — so hot paths that only transitively import this file (e.g. task
+// routes -> notification.service -> mailer) don't pull the SDK into their cold-start init.
+// Credentials are resolved by the AWS SDK default chain: the shared ~/.aws/credentials profile
+// locally, or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in production.
 let client: SESv2Client | null = null;
-function sesClient(): SESv2Client {
-  if (!client) client = new SESv2Client({ region: env('AWS_REGION', 'us-east-1') });
+async function sesClient(): Promise<SESv2Client> {
+  if (!client) {
+    const { SESv2Client } = await import('@aws-sdk/client-sesv2');
+    client = new SESv2Client({ region: env('AWS_REGION', 'us-east-1') });
+  }
   return client;
 }
 
@@ -45,7 +51,9 @@ export interface MailInput {
 /** Sends one email through SES. Throws on failure — callers treat delivery as best-effort. */
 export async function sendMail({ to, subject, html, text }: MailInput): Promise<void> {
   const from = env('SES_FROM', 'Core Tasks <noreply@micelium.dev>');
-  await sesClient().send(
+  const { SendEmailCommand } = await import('@aws-sdk/client-sesv2');
+  const ses = await sesClient();
+  await ses.send(
     new SendEmailCommand({
       FromEmailAddress: from,
       Destination: { ToAddresses: [to] },
