@@ -4,7 +4,7 @@ export type TaskWithRelations = Prisma.TaskGetPayload<{
   include: {
     column: { include: { board: true } };
     project: { include: { client: true } };
-    assignee: true;
+    assignees: true;
     createdBy: true;
     timeEntries: { include: { user: true } };
     labels: true;

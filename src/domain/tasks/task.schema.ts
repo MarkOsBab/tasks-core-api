@@ -67,6 +67,22 @@ async function userExists(id: string): Promise<boolean> {
   return user !== null;
 }
 
+// Every assignee id must resolve to a live user; a single bad id fails the whole array.
+async function assertAssigneesExist(
+  ids: string[] | null | undefined,
+  ctx: z.RefinementCtx,
+): Promise<void> {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const results = await Promise.all(ids.map((id) => userExists(id)));
+  if (results.some((exists) => !exists)) {
+    ctx.addIssue({
+      path: ['assigneeIds'],
+      code: z.ZodIssueCode.custom,
+      message: lmsg.selected('assigneeIds'),
+    });
+  }
+}
+
 export const storeTaskSchema = z
   .object({
     columnId: reqString('columnId'),
@@ -78,7 +94,7 @@ export const storeTaskSchema = z
     priority: reqEnum('priority', TASK_PRIORITY).default('medium'),
     position: nullableInt('position', 0),
     dueDate: nullableDate('dueDate'),
-    assigneeId: nullableString('assigneeId'),
+    assigneeIds: z.array(z.string()).nullable().optional(),
     labelIds: z.array(z.string()).nullable().optional(),
   })
   .superRefine(async (val, ctx) => {
@@ -96,13 +112,7 @@ export const storeTaskSchema = z
         message: lmsg.selected('projectId'),
       });
     }
-    if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {
-      ctx.addIssue({
-        path: ['assigneeId'],
-        code: z.ZodIssueCode.custom,
-        message: lmsg.selected('assigneeId'),
-      });
-    }
+    await assertAssigneesExist(val.assigneeIds, ctx);
   });
 
 // Factory to match the updateHandler contract; tasks have no unique checks so id is unused.
@@ -116,7 +126,7 @@ export function updateTaskSchema(_id: string) {
       priority: optionalEnum('priority', TASK_PRIORITY),
       position: nullableInt('position', 0),
       dueDate: nullableDate('dueDate'),
-      assigneeId: nullableString('assigneeId'),
+      assigneeIds: z.array(z.string()).nullable().optional(),
       labelIds: z.array(z.string()).nullable().optional(),
     })
     .superRefine(async (val, ctx) => {
@@ -134,13 +144,7 @@ export function updateTaskSchema(_id: string) {
           message: lmsg.selected('projectId'),
         });
       }
-      if (val.assigneeId != null && val.assigneeId !== '' && !(await userExists(val.assigneeId))) {
-        ctx.addIssue({
-          path: ['assigneeId'],
-          code: z.ZodIssueCode.custom,
-          message: lmsg.selected('assigneeId'),
-        });
-      }
+      await assertAssigneesExist(val.assigneeIds, ctx);
     });
 }
 

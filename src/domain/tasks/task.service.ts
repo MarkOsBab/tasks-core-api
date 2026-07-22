@@ -11,7 +11,7 @@ import type { TaskWithRelations } from './task.types';
 const TASK_INCLUDE = {
   column: { include: { board: true } },
   project: { include: { client: true } },
-  assignee: true,
+  assignees: true,
   createdBy: true,
   timeEntries: { where: { deletedAt: null }, include: { user: true } },
   labels: true,
@@ -54,28 +54,30 @@ class TaskService extends BaseService<TaskWithRelations> {
     return updated;
   }
 
-  /** Notifies the assignee when a task first lands on them or is reassigned; never on self-assign. */
+  /** Notifies each user newly added as an assignee (not the ones already on the task); never self. */
   private async notifyAssignment(
     task: TaskWithRelations,
     existing: TaskWithRelations | null,
     actor?: AuthUser,
   ): Promise<void> {
-    const assigneeId = task.assigneeId;
-    if (assigneeId == null) return;
-    if (existing && existing.assigneeId === assigneeId) return; // assignee unchanged
-    if (actor && assigneeId === actor.id) return; // self-assign
-    try {
-      await notificationService.notify({
-        userId: assigneeId,
-        type: 'task_assigned',
-        actorId: actor?.id ?? null,
-        actorName: await this.resolveUserName(actor?.id),
-        taskId: task.id,
-        taskTitle: task.title,
-        link: buildTaskLink(task),
-      });
-    } catch (err) {
-      console.error('[tasks] assignment notification failed:', err);
+    const previous = new Set((existing?.assignees ?? []).map((u) => u.id));
+    const added = task.assignees.filter((u) => !previous.has(u.id) && u.id !== actor?.id);
+    if (added.length === 0) return;
+    const actorName = await this.resolveUserName(actor?.id);
+    for (const user of added) {
+      try {
+        await notificationService.notify({
+          userId: user.id,
+          type: 'task_assigned',
+          actorId: actor?.id ?? null,
+          actorName,
+          taskId: task.id,
+          taskTitle: task.title,
+          link: buildTaskLink(task),
+        });
+      } catch (err) {
+        console.error('[tasks] assignment notification failed:', err);
+      }
     }
   }
 
@@ -133,11 +135,14 @@ class TaskService extends BaseService<TaskWithRelations> {
       const onGlobalBoard = existing.column.board.projectId == null;
       if (onGlobalBoard) prepared.projectId = explicitProjectId;
     }
-    if ('assigneeId' in prepared) {
-      prepared.assigneeId =
-        typeof prepared.assigneeId === 'string' && prepared.assigneeId !== ''
-          ? BigInt(prepared.assigneeId)
-          : null;
+    // assigneeIds -> implicit-m2m write: connect on create, set (full replace) on update.
+    if ('assigneeIds' in prepared) {
+      const ids = (Array.isArray(prepared.assigneeIds) ? (prepared.assigneeIds as string[]) : [])
+        .map((id) => toBigIntOrUndefined(id))
+        .filter((id): id is bigint => id !== undefined)
+        .map((id) => ({ id }));
+      delete prepared.assigneeIds;
+      prepared.assignees = existing ? { set: ids } : { connect: ids };
     }
     if ('dueDate' in prepared) {
       prepared.dueDate =

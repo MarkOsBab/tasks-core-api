@@ -86,8 +86,10 @@ export function taskResource(task: TaskWithRelations) {
     priority: task.priority,
     position: task.position,
     dueDate: dmy(task.dueDate),
-    assigneeId: task.assigneeId != null ? strId(task.assigneeId) : null,
-    assigneeName: task.assignee ? fullName(task.assignee) : null,
+    // R4: the implicit m2m pivot does not filter soft-deletes — drop trashed assignees by hand.
+    assignees: task.assignees
+      .filter((user) => !user.deletedAt)
+      .map((user) => ({ id: strId(user.id), name: fullName(user) })),
     createdById: task.createdById != null ? strId(task.createdById) : null,
     createdByName: task.createdBy ? fullName(task.createdBy) : null,
     trackedSeconds,

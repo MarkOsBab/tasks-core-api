@@ -75,10 +75,10 @@ async function main() {
 
   const tasks = [
     { title: 'Define sitemap', status: 'done', priority: 'high', position: 0 },
-    { title: 'Design home page', status: 'in_progress', priority: 'high', position: 0, assigneeId: dev.id },
+    { title: 'Design home page', status: 'in_progress', priority: 'high', position: 0, assignees: { connect: [{ id: dev.id }] } },
     { title: 'Set up CMS', status: 'todo', priority: 'medium', position: 0 },
     { title: 'Content migration plan', status: 'todo', priority: 'low', position: 1 },
-    { title: 'QA checklist', status: 'review', priority: 'medium', position: 0, assigneeId: admin.id },
+    { title: 'QA checklist', status: 'review', priority: 'medium', position: 0, assignees: { connect: [{ id: admin.id }, { id: dev.id }] } },
   ];
   for (const t of tasks) {
     await upsertTask(globalBoard.id, website.id, t);

@@ -25,9 +25,13 @@ function applyTaskFilters(filters: Record<string, string>): Record<string, unkno
     if (clientId !== undefined) where.project = { clientId };
   }
   if (filters.priority) where.priority = filters.priority;
-  if (filters.assigneeId !== undefined && filters.assigneeId !== '') {
-    const assigneeId = toBigIntOrUndefined(filters.assigneeId);
-    if (assigneeId !== undefined) where.assigneeId = assigneeId;
+  // ?assigneeIds=1,2 -> tasks assigned to at least one of those users.
+  if (filters.assigneeIds !== undefined && filters.assigneeIds !== '') {
+    const assigneeIds = filters.assigneeIds
+      .split(',')
+      .map((id) => toBigIntOrUndefined(id.trim()))
+      .filter((id): id is bigint => id !== undefined);
+    if (assigneeIds.length > 0) where.assignees = { some: { id: { in: assigneeIds } } };
   }
   // ?labelIds=1,2 -> tasks holding at least one of those labels.
   if (filters.labelIds !== undefined && filters.labelIds !== '') {
@@ -49,7 +53,7 @@ export class TaskRepository extends BaseRepository<TaskWithRelations> {
       include: {
         column: { include: { board: true } },
         project: { include: { client: true } },
-        assignee: true,
+        assignees: true,
         createdBy: true,
         timeEntries: { where: { deletedAt: null }, include: { user: true } },
         labels: true,

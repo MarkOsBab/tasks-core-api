@@ -21,7 +21,7 @@ export class CommentRepository extends BaseRepository<CommentWithRelations> {
     super(prisma.comment as unknown as ModelDelegate<CommentWithRelations>, {
       searchable: ['body'],
       sortable: ['id', 'createdAt'],
-      include: { task: true, user: true },
+      include: { task: { include: { assignees: true } }, user: true },
       applyFilters: applyCommentFilters,
     });
   }

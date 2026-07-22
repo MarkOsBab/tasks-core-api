@@ -32,14 +32,14 @@ class CommentService extends BaseService<CommentWithRelations> {
     return created;
   }
 
-  /** Notifies the task's assignee and creator (except the commenter) about a new comment. */
+  /** Notifies the task's assignees and creator (except the commenter) about a new comment. */
   private async notifyParticipants(comment: CommentWithRelations, actor?: AuthUser): Promise<void> {
     const task = comment.task;
     if (!task) return;
     const actorId = actor?.id ?? comment.userId;
     const actorName = `${comment.user.name} ${comment.user.lastName ?? ''}`.trim();
     const recipients = new Set<bigint>();
-    if (task.assigneeId != null) recipients.add(task.assigneeId);
+    for (const assignee of task.assignees) recipients.add(assignee.id);
     if (task.createdById != null) recipients.add(task.createdById);
     recipients.delete(actorId); // never notify the commenter
     for (const userId of recipients) {
