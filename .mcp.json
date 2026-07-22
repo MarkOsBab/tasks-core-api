@@ -2,7 +2,7 @@
   "mcpServers": {
     "core-tasks": {
       "type": "http",
-      "url": "http://localhost:3002/api/mcp"
+      "url": "https://tasks-core-api.vercel.app/api/mcp"
     }
   }
 }

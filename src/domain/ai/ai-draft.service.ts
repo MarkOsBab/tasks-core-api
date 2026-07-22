@@ -97,7 +97,8 @@ const DRAFTS_JSON_SCHEMA = {
           },
           estimatedHours: {
             type: ['number', 'null'],
-            description: 'Effort estimate in hours based on similar tracked tasks; null if unknown.',
+            description:
+              'Estimated hours to COMPLETE the card assuming development is AI-assisted (coding agents like Claude Code do the implementation, a human reviews). Calibrate with trackedHours of comparable tasks; null if unknown.',
           },
           reasoning: {
             type: 'string',
@@ -163,7 +164,7 @@ Rules:
 - priority: infer from urgency words in the notes and from how similar sample tasks are prioritized; default "medium".
 - columnId: use the first non-terminal column (backlog/todo) unless the notes clearly say work is already in progress.
 - projectId: match the notes against the provided projects/clients; if a target project id is given in the user message, use exactly that id on every card. Use null when nothing matches.
-- estimatedHours: base it on trackedHours of comparable sampleTasks AND the project's own pace (projects[].stats: trackedHours vs estimatedHours, done/open counts); null when there is no comparable signal.
+- estimatedHours: how long the card will take END TO END. The studio implements development cards with AI coding agents (Claude Code) supervised by a developer, so estimate at AI-assisted pace: implementation itself is fast, and the time that remains is review, integration, verification of acceptance criteria and deploy. Calibrate against trackedHours of comparable sampleTasks AND the project's own pace (projects[].stats: trackedHours vs estimatedHours, done/open counts) — recent tracked times already reflect AI-assisted work. Non-development cards (meetings, content, design reviews) keep human pace. Null when there is no comparable signal.
 - reasoning: one short sentence explaining why that assignee/estimate (shown to the human reviewer).
 
 Each card also carries a machine-readable spec that a coding agent will use to implement it autonomously:
@@ -309,6 +310,7 @@ class AiDraftService {
           title: draft.title,
           description: draft.description ?? null,
           priority: draft.priority,
+          estimatedHours: draft.estimatedHours ?? null,
           assigneeIds: draft.assigneeIds ?? [],
           labelIds: draft.labelIds ?? [],
           // dependsOnIndexes stays out: it only means something inside this batch, so it is

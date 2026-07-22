@@ -94,6 +94,7 @@ export function taskResource(task: TaskWithRelations) {
     createdByName: task.createdBy ? fullName(task.createdBy) : null,
     // Implementation spec of AI-generated cards (null on hand-made ones); read by MCP agents.
     aiMetadata: task.aiMetadata ?? null,
+    estimatedHours: task.estimatedHours === null ? null : Number(task.estimatedHours),
     trackedSeconds,
     firstTrackedAt: dmyHms(firstTrackedAt),
     lastTrackedAt: dmyHms(lastTrackedAt),

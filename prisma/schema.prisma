@@ -161,6 +161,7 @@ model Task {
   dueDate     DateTime?    @map("due_date") @db.Date
   createdById BigInt?      @map("created_by_id") // auth user that created the card
   aiMetadata  Json?        @map("ai_metadata") // machine-readable implementation spec (AI-generated cards): acceptanceCriteria, technicalNotes, targetRepos, dependsOnTaskIds
+  estimatedHours Decimal?  @map("estimated_hours") @db.Decimal(6, 2) // effort estimate; AI-generated cards assume AI-assisted implementation (Claude Code)
 
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")

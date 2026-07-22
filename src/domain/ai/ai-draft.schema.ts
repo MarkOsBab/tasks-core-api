@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { toBigIntOrUndefined } from '@/lib/ids';
-import { lmsg, nullableString, reqEnum, reqString } from '@/lib/validation';
+import { lmsg, nullableNumber, nullableString, reqEnum, reqString } from '@/lib/validation';
 import { TASK_PRIORITY } from '../tasks/task.schema';
 
 // Soft-delete-aware (extension filters findFirst): trashed projects are not valid tags.
@@ -39,6 +39,8 @@ const applyDraftSchema = z.object({
   labelIds: z.array(z.string()).nullable().optional(),
   // Sub-steps persisted as checklist items on the created task.
   checklist: z.array(reqString('checklist item', 255)).max(30).nullable().optional(),
+  // Effort estimate (hours, AI-assisted pace) persisted as Task.estimatedHours.
+  estimatedHours: nullableNumber('estimatedHours', 0),
   // Machine-readable implementation spec, persisted as Task.aiMetadata for MCP agents.
   aiMetadata: z
     .object({

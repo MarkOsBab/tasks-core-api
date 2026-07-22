@@ -7,6 +7,7 @@ import { dmy, dmyHms, strId } from '@/resources/serialize';
 import type { AuthUser } from '@/lib/auth/context';
 import { taskService } from '../tasks/task.service';
 import { commentService } from '../comments/comment.service';
+import { timeEntryService } from '../time-entries/time-entry.service';
 import { buildTaskLink } from '../notifications/notification.service';
 
 /**
@@ -52,6 +53,7 @@ function parseId(value: string, label: string): bigint {
 }
 
 const HOURS = (seconds: number) => Math.round((seconds / 3600) * 100) / 100;
+const elapsed = (start: Date) => Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
 
 class McpService {
   /**
@@ -182,6 +184,7 @@ class McpService {
           done: t.checklistItems.filter((c) => c.done).length,
           total: t.checklistItems.length,
         },
+        estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
         link: buildTaskLink(t),
       })),
     };
@@ -247,8 +250,71 @@ class McpService {
           at: dmyHms(c.createdAt),
           body: c.body,
         })),
+      // Estimate assumes AI-assisted implementation (agent codes, human reviews); compare with
+      // trackedHours to know how much budget is left.
+      estimatedHours: task.estimatedHours === null ? null : Number(task.estimatedHours),
       trackedHours: HOURS(trackedSeconds),
       link: buildTaskLink(task),
+    };
+  }
+
+  /**
+   * Starts the acting user's timer on a task. One running timer per user: the service
+   * auto-closes whatever else was running, and the result says so for transparency.
+   */
+  async startTracking(taskId: string, description: string | null, user: AuthUser) {
+    const id = parseId(taskId, 'taskId');
+    const task = await prisma.task.findFirst({ where: { id, deletedAt: null } });
+    if (!task) throw notFound();
+
+    const previous = await timeEntryService.findRunning(user.id);
+    const entry = await timeEntryService.start(user.id, id, description);
+    return {
+      taskId: strId(id),
+      title: task.title,
+      startedAt: dmyHms(entry.startedAt),
+      description: entry.description,
+      previousTimerStopped:
+        previous === null
+          ? null
+          : {
+              taskId: strId(previous.taskId),
+              title: previous.task.title,
+              trackedHours: HOURS(elapsed(previous.startedAt)),
+            },
+    };
+  }
+
+  /**
+   * Stops the acting user's running timer. With a taskId it must match that task; without one
+   * it stops whatever is running. Not having a timer is a normal outcome, not an error.
+   */
+  async stopTracking(taskId: string | null, user: AuthUser) {
+    const running = await timeEntryService.findRunning(user.id);
+    if (!running) {
+      return { stopped: false, message: 'No running timer for this user.' };
+    }
+    if (taskId != null && parseId(taskId, 'taskId') !== running.taskId) {
+      return {
+        stopped: false,
+        message: `The running timer is on another task ("${running.task.title}", id ${strId(running.taskId)}). Call stop_tracking without taskId to stop it.`,
+      };
+    }
+    const entry = await timeEntryService.stop(user.id, running.taskId);
+    if (!entry) return { stopped: false, message: 'No running timer for this user.' };
+
+    const total = await prisma.timeEntry.aggregate({
+      _sum: { durationSeconds: true },
+      where: { deletedAt: null, endedAt: { not: null }, taskId: running.taskId },
+    });
+    return {
+      stopped: true,
+      taskId: strId(running.taskId),
+      title: running.task.title,
+      startedAt: dmyHms(entry.startedAt),
+      endedAt: dmyHms(entry.endedAt),
+      sessionHours: HOURS(entry.durationSeconds ?? 0),
+      taskTrackedHours: HOURS(total._sum.durationSeconds ?? 0),
     };
   }
 

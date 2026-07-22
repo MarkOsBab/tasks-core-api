@@ -22,23 +22,27 @@ and authenticate (OAuth browser consent), then stop.
    card whose dependencies are not yet in a terminal column is BLOCKED — skip it and say why.
 3. **Read the card** (`get_task`): the plain-text description, `aiMetadata.acceptanceCriteria`
    (the definition of done), `aiMetadata.technicalNotes` (implementation hints),
-   `aiMetadata.targetRepos` (which working copies the change belongs in) and the checklist.
+   `aiMetadata.targetRepos` (which working copies the change belongs in), the checklist and
+   `estimatedHours` (the time budget, estimated for AI-assisted work).
    Hand-made cards may have `aiMetadata: null` — then the description and checklist are the spec.
 4. **Start**: `move_task` the card to the in-progress column (see `list_columns`; the first
-   non-terminal column after the backlog).
+   non-terminal column after the backlog) and `start_tracking` it (one running timer per user —
+   starting auto-stops any previous one) so tracked hours reflect the real work time.
 5. **Implement** in the repo(s) from `targetRepos`. If a target repo is not the current working
    copy, look for a sibling folder with that name; if it is not checked out locally, say so and
    implement only the parts that belong to the current repo. Follow each repo's own CLAUDE.md
    rules. Work through the checklist and acceptance criteria one by one; run the repo's
    typecheck/build (and tests if present) before claiming done.
-6. **Log**: `comment_task` with a short summary — what was implemented, key files touched, how
-   each acceptance criterion was verified, and anything left open.
+6. **Log**: `stop_tracking` (the result gives the session and task totals), then `comment_task`
+   with a short summary — what was implemented, key files touched, how each acceptance criterion
+   was verified, time tracked vs `estimatedHours`, and anything left open.
 7. **Close**: only if every acceptance criterion is verified and the build is green, `move_task`
    to the terminal column. Otherwise leave it in progress and report what is missing.
 
 ## Rules
 
 - One card at a time; finish (or explicitly park) before starting the next.
+- Never leave a timer running after finishing or parking a card (`stop_tracking`).
 - Never mark a card done with failing builds or unverified criteria.
 - Comments on cards are for the team: write them in the card's language (usually Spanish),
   concise and factual.

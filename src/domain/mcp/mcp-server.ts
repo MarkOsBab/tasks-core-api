@@ -93,8 +93,8 @@ export function registerMcpTools(server: McpServer): void {
     {
       description:
         'Get the full detail of one task: plain-text description, acceptance checklist, labels, assignees ' +
-        'with roles, recent comments, tracked hours and the project (with its registered repositories). ' +
-        'This is the card an agent should read before implementing it.',
+        'with roles, recent comments, estimated vs tracked hours and the project (with its registered ' +
+        'repositories). This is the card an agent should read before implementing it.',
       inputSchema: { taskId: z.string().describe('Task id') },
       annotations: { readOnlyHint: true },
     },
@@ -144,6 +144,56 @@ export function registerMcpTools(server: McpServer): void {
     async ({ taskId, body }, extra) => {
       try {
         return jsonResult(await mcpService.commentTask(taskId, body, authUserFrom(extra.authInfo)));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'start_tracking',
+    {
+      description:
+        'Start the time-tracking timer on a task, attributed to the MCP token\'s user. Call it when you ' +
+        'begin implementing a card (right after moving it to in progress) so tracked hours reflect the ' +
+        'real work time. One running timer per user: starting here auto-stops any other running timer ' +
+        '(the result reports which one). Pair with stop_tracking when you finish or pause.',
+      inputSchema: {
+        taskId: z.string().describe('Task id'),
+        description: z
+          .string()
+          .max(1000)
+          .optional()
+          .describe('Optional note for the timesheet entry (e.g. "AI agent implementation")'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ taskId, description }, extra) => {
+      try {
+        return jsonResult(
+          await mcpService.startTracking(taskId, description ?? null, authUserFrom(extra.authInfo)),
+        );
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'stop_tracking',
+    {
+      description:
+        'Stop the MCP user\'s running time-tracking timer and get the session and task totals (compare ' +
+        'with the task\'s estimatedHours). Pass taskId to assert the timer belongs to that task, or omit ' +
+        'it to stop whatever is running. Having no running timer is a normal outcome, not an error.',
+      inputSchema: {
+        taskId: z.string().optional().describe('Task id the running timer should belong to (optional)'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async ({ taskId }, extra) => {
+      try {
+        return jsonResult(await mcpService.stopTracking(taskId ?? null, authUserFrom(extra.authInfo)));
       } catch (err) {
         return errorResult(err);
       }

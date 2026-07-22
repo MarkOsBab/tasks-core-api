@@ -4,6 +4,7 @@ import { toBigIntOrUndefined } from '@/lib/ids';
 import {
   lmsg,
   nullableInt,
+  nullableNumber,
   nullableString,
   optionalEnum,
   optionalRequiredString,
@@ -94,6 +95,7 @@ export const storeTaskSchema = z
     priority: reqEnum('priority', TASK_PRIORITY).default('medium'),
     position: nullableInt('position', 0),
     dueDate: nullableDate('dueDate'),
+    estimatedHours: nullableNumber('estimatedHours', 0),
     assigneeIds: z.array(z.string()).nullable().optional(),
     labelIds: z.array(z.string()).nullable().optional(),
   })
@@ -126,6 +128,7 @@ export function updateTaskSchema(_id: string) {
       priority: optionalEnum('priority', TASK_PRIORITY),
       position: nullableInt('position', 0),
       dueDate: nullableDate('dueDate'),
+      estimatedHours: nullableNumber('estimatedHours', 0),
       assigneeIds: z.array(z.string()).nullable().optional(),
       labelIds: z.array(z.string()).nullable().optional(),
     })
