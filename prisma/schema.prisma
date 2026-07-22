@@ -60,6 +60,7 @@ model User {
   createdTasks  Task[]      @relation("TaskCreator")
   timeEntries   TimeEntry[] @relation("TimeEntryUser")
   comments      Comment[]   @relation("CommentAuthor")
+  attachments   TaskAttachment[] @relation("AttachmentUploader")
 
   notifications          Notification[] @relation("NotificationRecipient")
   triggeredNotifications Notification[] @relation("NotificationActor")
@@ -169,11 +170,37 @@ model Task {
   comments       Comment[]
   labels         Label[]
   checklistItems ChecklistItem[]
+  attachments    TaskAttachment[]
   notifications  Notification[]
 
   @@index([columnId, position])
   @@index([projectId])
   @@map("tasks")
+}
+
+// Files/images attached to a card. The blob lives in the private Supabase Storage bucket
+// (storagePath); this row only carries metadata. Upload is a client-direct-to-Supabase flow:
+// POST creates a `pending` row + signed upload URL, the browser PUTs the blob straight to the
+// bucket (bypassing the API's body-size limit), then the confirm endpoint flips it to `ready`.
+model TaskAttachment {
+  id           BigInt   @id @default(autoincrement())
+  taskId       BigInt   @map("task_id")
+  filename     String
+  contentType  String   @map("content_type")
+  size         Int // bytes; images/docs stay well under the Int (~2GB) ceiling
+  storagePath  String   @map("storage_path") // object key inside the private bucket
+  uploadedById BigInt?  @map("uploaded_by_id") // auth user that uploaded it
+  status       String   @default("pending") // pending -> ready (client confirmed the blob is up)
+
+  createdAt DateTime? @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  task       Task  @relation(fields: [taskId], references: [id])
+  uploadedBy User? @relation("AttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
+  @@map("task_attachments")
 }
 
 model TimeEntry {
