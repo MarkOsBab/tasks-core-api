@@ -5,6 +5,7 @@ import { env, intEnv } from '../env';
 const secretKey = () => new TextEncoder().encode(env('JWT_SECRET'));
 const ttlSeconds = () => intEnv('JWT_TTL', 60) * 60;
 const refreshTtlSeconds = () => intEnv('JWT_REFRESH_TTL', 20160) * 60;
+const mcpTtlSeconds = () => intEnv('MCP_TOKEN_TTL', 129600) * 60; // default 90 days
 const issuer = () => env('APP_URL', 'core-tasks');
 
 export interface IssuedToken {
@@ -26,6 +27,23 @@ export async function signToken(
     .setIssuer(issuer())
     .setIssuedAt(iat)
     .setNotBefore(iat)
+    .setExpirationTime(now + expiresIn)
+    .setJti(randomUUID())
+    .sign(secretKey());
+  return { token, expiresIn };
+}
+
+// Long-lived token for MCP clients (Claude Code etc.). Same stateless HS256 JWT the API already
+// verifies — only the TTL differs (`MCP_TOKEN_TTL` minutes). Revocation = rotating JWT_SECRET.
+export async function signMcpToken(userId: string | bigint | number): Promise<IssuedToken> {
+  const now = Math.floor(Date.now() / 1000);
+  const expiresIn = mcpTtlSeconds();
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setSubject(String(userId))
+    .setIssuer(issuer())
+    .setIssuedAt(now)
+    .setNotBefore(now)
     .setExpirationTime(now + expiresIn)
     .setJti(randomUUID())
     .sign(secretKey());

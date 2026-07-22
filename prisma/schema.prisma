@@ -52,10 +52,12 @@ model User {
   email     String    @unique
   password  String? // null = invited user that has not set a password yet (login is rejected)
   image     String?
+  role      String?   @db.VarChar(255) // free-text job role ("Fullstack developer", "Diseñadora"…); drives AI assignment
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at") // soft delete: history (tasks/time entries) keeps pointing here
 
+  memberProjects Project[] @relation("ProjectMembers") // projects this user works on; drives AI assignment
   assignedTasks Task[]      @relation("TaskAssignees")
   createdTasks  Task[]      @relation("TaskCreator")
   timeEntries   TimeEntry[] @relation("TimeEntryUser")
@@ -111,6 +113,7 @@ model Project {
   description    String?       @db.Text
   color          String?       @db.VarChar(7) // hex, unique-per-project visual identity (auto-assigned)
   estimatedHours Decimal?      @map("estimated_hours") @db.Decimal(6, 2)
+  repositories   String[]      @default([]) // git repo URLs/slugs; lets the MCP map a working copy to its project
   status         ProjectStatus @default(active)
   startDate      DateTime?     @map("start_date") @db.Date
   endDate        DateTime?     @map("end_date") @db.Date
@@ -122,6 +125,7 @@ model Project {
   proposals Proposal[]
   tasks     Task[]
   board     Board?
+  members   User[]     @relation("ProjectMembers") // implicit m2m; Prisma manages the _ProjectMembers pivot
 
   @@map("projects")
 }
@@ -156,6 +160,7 @@ model Task {
   position    Int          @default(0)
   dueDate     DateTime?    @map("due_date") @db.Date
   createdById BigInt?      @map("created_by_id") // auth user that created the card
+  aiMetadata  Json?        @map("ai_metadata") // machine-readable implementation spec (AI-generated cards): acceptanceCriteria, technicalNotes, targetRepos, dependsOnTaskIds
 
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")

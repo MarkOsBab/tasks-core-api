@@ -8,5 +8,6 @@ export function userResource(user: User) {
     lastName: user.lastName,
     email: user.email,
     image: user.image,
+    role: user.role,
   };
 }

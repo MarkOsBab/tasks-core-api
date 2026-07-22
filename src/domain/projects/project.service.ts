@@ -78,6 +78,12 @@ class ProjectService extends BaseService<ProjectWithClient> {
     if (typeof prepared.clientId === 'string') prepared.clientId = BigInt(prepared.clientId);
     if ('startDate' in prepared) prepared.startDate = parseDateInput(prepared.startDate);
     if ('endDate' in prepared) prepared.endDate = parseDateInput(prepared.endDate);
+    // Scalar list: normalize null -> [] and drop blank entries so matching stays clean.
+    if ('repositories' in prepared) {
+      prepared.repositories = (Array.isArray(prepared.repositories) ? prepared.repositories : [])
+        .map((repo) => String(repo).trim())
+        .filter((repo) => repo !== '');
+    }
     if (prepared.color === '') prepared.color = null;
     // Every project gets a unique visual color unless one is explicitly chosen.
     if (!existing && prepared.color == null) {

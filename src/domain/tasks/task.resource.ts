@@ -92,6 +92,8 @@ export function taskResource(task: TaskWithRelations) {
       .map((user) => ({ id: strId(user.id), name: fullName(user) })),
     createdById: task.createdById != null ? strId(task.createdById) : null,
     createdByName: task.createdBy ? fullName(task.createdBy) : null,
+    // Implementation spec of AI-generated cards (null on hand-made ones); read by MCP agents.
+    aiMetadata: task.aiMetadata ?? null,
     trackedSeconds,
     firstTrackedAt: dmyHms(firstTrackedAt),
     lastTrackedAt: dmyHms(lastTrackedAt),

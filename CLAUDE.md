@@ -67,6 +67,15 @@ el schema de Prisma con `@map`. Los filtros de query también llegan **camelCase
   DB — tabla `password_reset_tokens`, TTL `PASSWORD_RESET_TTL` min, default 60).
 - `POST /api/auth/reset-password` `{ token, password }` → setea la password y quema el token
   (422 si inválido/expirado/usado). Lo usan tanto el forgot como el invite de usuarios nuevos.
+- `POST /api/auth/mcp-token` (autenticado) → `{ token, token_type, expires_in }`: JWT HS256 de
+  larga vida (`MCP_TOKEN_TTL` min, default 90 días) para clientes MCP; mismo verify que el resto.
+- **OAuth para el MCP** (`src/domain/oauth/`, stateless, PKCE S256 obligatorio, clientes públicos):
+  discovery en `/.well-known/oauth-authorization-server` y `/.well-known/oauth-protected-resource`
+  (CORS `*`; origin del request), `POST /api/oauth/register` (DCR: acepta cualquier cliente),
+  `GET /api/oauth/authorize` (valida y 302 al consent `${APP_WEB_URL}/oauth/authorize`),
+  `POST /api/oauth/code` (autenticado: el consent de la UI acuña el code = JWT de 5 min con
+  redirect_uri + challenge), `POST /api/oauth/token` (verifica code + PKCE → mismo token MCP de 90
+  días; errores shape RFC 6749). Públicas por naturaleza: register/authorize/token.
 - Todo lo demás exige `Authorization: Bearer` → 401 `{ "message": "Unauthenticated." }`.
 
 ### 6. Errores
@@ -129,7 +138,7 @@ La DB es el Supabase real. Migraciones nuevas: `npx prisma migrate dev` (crea y 
 ## Estructura
 
 ```
-app/api/                       # rutas (auth, clients, projects, boards, board-columns, proposals, tasks, time-entries, users, dashboard)
+app/api/                       # rutas (auth, clients, projects, boards, board-columns, proposals, tasks, time-entries, users, dashboard, ai, mcp)
 middleware.ts                  # CORS para /api/* (CORS_ALLOWED_ORIGINS + localhost)
 src/
   lib/                         # prisma (singleton + soft-delete ext + rawExists), pagination,
@@ -138,7 +147,7 @@ src/
   resources/                   # serialize (fechas/strId) + user.resource
   domain/
     base/                      # base.repository, base.service, crud-routes
-    auth/  clients/  projects/  boards/  board-columns/  proposals/  tasks/  time-entries/  users/  dashboard/
+    auth/  clients/  projects/  boards/  board-columns/  proposals/  tasks/  time-entries/  users/  dashboard/  ai/  mcp/  oauth/
 prisma/schema.prisma  prisma/seed.mjs
 ```
 
@@ -148,14 +157,16 @@ prisma/schema.prisma  prisma/seed.mjs
 |-----------|------------------|----------------------------------------|
 | Auth      | `/api/auth/*`    | login/me/refresh/logout                |
 | Clients   | `/api/clients`   | `GET /api/clients/select?q=`           |
-| Projects  | `/api/projects`  | `select?q=&clientId=`; filtros clientId/status |
+| Projects  | `/api/projects`  | `select?q=&clientId=`; filtros clientId/status; **`repositories[]`** (URLs/nombres de repos git — los usa el MCP para mapear working copy → proyecto) |
 | Proposals | `/api/proposals` | filtros projectId/status; sentAt auto al pasar a `sent` |
 | Boards    | `/api/boards`    | `select?q=`; filtro `scope=global`; **solo existe el board global** (los boards por proyecto se eliminaron en la migración `single_global_board`; los projects ya no crean board); columnas embebidas |
 | Columns   | `/api/board-columns` | filtro `boardId`; `POST /{id}/move` (reordena); `DELETE ?moveToColumnId=` (reasigna tareas antes de borrar) |
 | Tasks     | `/api/tasks`     | `select?q=&projectId=&boardId=`; `POST /api/tasks/{id}/move` (`columnId`+position, reordena columna); **asignados = m2m** (`assigneeIds[]` en body, `assignees:[{id,name}]` en respuesta); filtros projectId/boardId/columnId/priority/assigneeIds (CSV, some-in)/clientId (vía project)/labelIds (CSV, some-in)/`search` (título) |
-| Users     | `/api/users`     | CRUD completo; DELETE = **soft delete con tombstone de email** (renombra a `deleted.{id}.{email}` para liberar el address —único en DB— y quema los reset tokens vivos; el historial de tasks/time entries queda; borrar el propio user autenticado = 422; login//me/forgot-password/asignación de tasks filtran deleted a mano porque usan `findUnique`, que la extensión no intercepta); el **create no acepta password** (`User.password` nullable): el service manda email de invitación con link set-password (token `PASSWORD_INVITE_TTL` min, default 7 días; best-effort — sin SES loguea el link en consola) y el login rechaza users sin password; `POST /api/users/{id}/reset-password` (acción admin del panel: manda email set/reset-password; invite si nunca definió password, **lanza error** si falla el envío); update con password `''`/`null`/omitido = no cambiarla (se hashea en `prepare()`, nunca sale en responses); email único (422; los soft-deleted no bloquean gracias al tombstone); `GET /api/users/select?q=` |
+| Users     | `/api/users`     | CRUD completo; DELETE = **soft delete con tombstone de email** (renombra a `deleted.{id}.{email}` para liberar el address —único en DB— y quema los reset tokens vivos; el historial de tasks/time entries queda; borrar el propio user autenticado = 422; login//me/forgot-password/asignación de tasks filtran deleted a mano porque usan `findUnique`, que la extensión no intercepta); el **create no acepta password** (`User.password` nullable): el service manda email de invitación con link set-password (token `PASSWORD_INVITE_TTL` min, default 7 días; best-effort — sin SES loguea el link en consola) y el login rechaza users sin password; `POST /api/users/{id}/reset-password` (acción admin del panel: manda email set/reset-password; invite si nunca definió password, **lanza error** si falla el envío); update con password `''`/`null`/omitido = no cambiarla (se hashea en `prepare()`, nunca sale en responses); email único (422; los soft-deleted no bloquean gracias al tombstone); `GET /api/users/select?q=`; **`role`** (texto libre, ej. "Fullstack developer") y **`projectIds[]`** (m2m `_ProjectMembers` con projects; en respuesta `projects:[{id,name}]` + `projectIds`) — ambos alimentan la asignación del Asistente IA |
 | Time entries | `/api/time-entries` | timesheet por task; filtros taskId/userId/projectId/clientId/`running=true\|false`/`startedFrom`+`startedTo` (d/m/Y o ISO; fecha sola = día completo)/`minDurationMinutes`+`maxDurationMinutes` (solo cerradas); `GET /running` (timer activo del user); `POST /api/tasks/{id}/time/start\|stop` (un timer por user: start auto-cierra el anterior; **start solo si el user es asignado de la task → 403 si no**; stop no valida asignación) |
 | Dashboard | `/api/dashboard` | counts (`totalClients`, `activeProjects`, `pendingProposals`, `openTasks`, `tasksByColumn`) |
+| AI        | `/api/ai/task-drafts` | **Asistente IA (OpenAI, `src/lib/ai.ts` — cliente lazy estilo mailer; env `OPENAI_API_KEY` + `AI_MODEL`, sin key → 503).** `POST /task-drafts` `{input, projectId?}`: `ai-context.service` arma un snapshot de TODA la DB (columnas del board global, labels+uso, users con **rol + memberProjects + historial agregado de las últimas 200 tasks** — assignedTaskCount/topLabels/trackedHours/recentProjects — + carga abierta, projects activos, 40 tasks recientes con labels/asignados/checklist/horas trackeadas, propuestas) y OpenAI (structured outputs strict) devuelve borradores `{title, description HTML, priority, columnId, projectId, labelIds/labels, assigneeIds/assignees, checklist[], estimatedHours, reasoning}` saneados contra el snapshot (ids inventados se descartan). **Regla de asignación: solo con evidencia** (membresía en el proyecto de la tarjeta > rol compatible > historial de labels/proyectos similares); la carga (`openTaskCount`) solo desempata entre calificados — nunca se asigna a alguien sin historial "porque está libre". Nada se persiste. Los borradores incluyen **`aiMetadata`** (acceptanceCriteria en texto plano, technicalNotes para el agente, targetRepos ⊆ repositories del proyecto, dependsOnIndexes intra-lote); el contexto lleva además **agregados por proyecto** (repositories, estimatedHours vs trackedHours, tasks open/done, topLabels, contributors) para estimar con el ritmo real. `POST /task-drafts/apply` `{drafts[]}`: valida ids en batch y crea cada task vía `taskService.create` (WIP, posición, notificaciones) + checklist items; persiste `Task.aiMetadata` resolviendo dependsOnIndexes → `dependsOnTaskIds` reales en una segunda pasada. `maxDuration=300` en la ruta de generación. |
+| MCP       | `/api/mcp`       | **Servidor MCP (streamable HTTP, `mcp-handler` + SDK oficial; stateless, sin Redis, SSE off).** Auth: bearer = mismo JWT HS256 (emitir uno largo con `POST /api/auth/mcp-token`); `withMcpAuth` mete el userId en `authInfo.extra` para atribuir mutaciones. Tools (en `src/domain/mcp/`: `mcp-server.ts` registra, `mcp.service.ts` es la capa de datos — lecturas SIN LLM, razona el agente que llama): `find_project` (repo → proyecto vía `Project.repositories` con fallback heurístico por nombre; sin args lista todo con openTaskCount), `list_tasks` (default pendientes = columnas no terminales), `get_task` (detalle implementation-ready: descripción HTML→texto vía `src/lib/html-text.ts`, checklist, comments, roles), `move_task` (columna por nombre o id, cae al final, respeta WIP vía `taskService.move`), `comment_task` (vía `commentService.create` → notifica), `get_project_summary` (miembros+roles, horas est/track, tasks por columna/asignado, propuestas con montos), `list_columns`. `get_task` incluye **`aiMetadata`** (spec machine-readable de tarjetas generadas por IA: acceptanceCriteria, technicalNotes, targetRepos, dependsOnTaskIds). Los repos clientes traen `.mcp.json` sin credenciales: el cliente hace el flow **OAuth** (401 → WWW-Authenticate → discovery → consent en la UI). Ambos repos tienen la skill **`/work-on-tasks`** que orquesta find_project → list_tasks → get_task → implementar → comment + move. |
 
 > Relaciones: existe **un único board** (el global, sin project; el schema conserva
 > `Board.projectId` nullable pero ya no se crean boards por proyecto). El board tiene **columnas**

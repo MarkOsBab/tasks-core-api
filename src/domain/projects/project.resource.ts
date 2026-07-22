@@ -12,6 +12,7 @@ export function projectResource(project: ProjectWithClient) {
     description: project.description,
     color: project.color,
     estimatedHours: project.estimatedHours === null ? null : Number(project.estimatedHours),
+    repositories: project.repositories ?? [],
     trackedSeconds: project.trackedSeconds ?? 0,
     status: project.status,
     startDate: dmy(project.startDate),

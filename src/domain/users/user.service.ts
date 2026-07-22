@@ -1,12 +1,13 @@
-import type { User } from '@prisma/client';
 import type { AuthUser } from '@/lib/auth/context';
 import { hashPassword } from '@/lib/auth/password';
 import { prisma } from '@/lib/prisma';
+import { toBigIntOrUndefined } from '@/lib/ids';
 import { passwordResetService } from '../auth/password-reset.service';
 import { BaseService } from '../base/base.service';
 import { UserRepository, userRepository } from './user.repository';
+import type { UserWithProjects } from './user.types';
 
-class UserService extends BaseService<User> {
+class UserService extends BaseService<UserWithProjects> {
   constructor(private readonly users: UserRepository) {
     super(users);
   }
@@ -18,7 +19,7 @@ class UserService extends BaseService<User> {
   // Users are created without a password (schema doesn't accept one): they get an invite
   // email with a set-password link. sendInvite never throws — the user row must survive
   // an SES hiccup, and in dev the link is logged server-side instead.
-  override async create(data: Record<string, unknown>, user?: AuthUser): Promise<User> {
+  override async create(data: Record<string, unknown>, user?: AuthUser): Promise<UserWithProjects> {
     const created = await super.create(data, user);
     await passwordResetService.sendInvite(created);
     return created;
@@ -27,7 +28,7 @@ class UserService extends BaseService<User> {
   // Soft delete with an email tombstone: `email` is unique in the DB (and rawExists counts
   // soft-deleted rows), so renaming to deleted.{id}.{email} frees the address for a future
   // re-create. Any live set-password token is burned in the same transaction.
-  override async delete(existing: User): Promise<boolean> {
+  override async delete(existing: UserWithProjects): Promise<boolean> {
     await prisma.$transaction([
       prisma.passwordResetToken.deleteMany({ where: { userId: existing.id } }),
       prisma.user.update({
@@ -40,13 +41,22 @@ class UserService extends BaseService<User> {
 
   protected async prepare(
     data: Record<string, unknown>,
-    _existing: User | null,
+    existing: UserWithProjects | null,
   ): Promise<Record<string, unknown>> {
     const prepared = { ...data };
     if (typeof prepared.password === 'string' && prepared.password.length > 0) {
       prepared.password = await hashPassword(prepared.password);
     } else {
       delete prepared.password; // update without password = keep the current one
+    }
+    // projectIds -> implicit-m2m write: connect on create, set (full replace) on update.
+    if ('projectIds' in prepared) {
+      const ids = (Array.isArray(prepared.projectIds) ? (prepared.projectIds as string[]) : [])
+        .map((id) => toBigIntOrUndefined(id))
+        .filter((id): id is bigint => id !== undefined)
+        .map((id) => ({ id }));
+      delete prepared.projectIds;
+      prepared.memberProjects = existing ? { set: ids } : { connect: ids };
     }
     return prepared;
   }

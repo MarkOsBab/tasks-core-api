@@ -29,6 +29,7 @@ export const storeProjectSchema = z
     description: nullableString('description'),
     color: nullableHexColor('color'), // omitted -> unique color auto-assigned in the service
     estimatedHours: nullableNumber('estimatedHours', 0),
+    repositories: z.array(z.string().max(500)).max(20).nullable().optional(),
     status: reqEnum('status', PROJECT_STATUS).default('active'),
     startDate: nullableString('startDate'),
     endDate: nullableString('endDate'),
@@ -51,6 +52,7 @@ export function updateProjectSchema(_id: string) {
       description: nullableString('description'),
       color: nullableHexColor('color'),
       estimatedHours: nullableNumber('estimatedHours', 0),
+      repositories: z.array(z.string().max(500)).max(20).nullable().optional(),
       status: optionalEnum('status', PROJECT_STATUS),
       startDate: nullableString('startDate'),
       endDate: nullableString('endDate'),

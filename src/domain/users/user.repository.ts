@@ -1,12 +1,14 @@
 import { Prisma, type User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { BaseRepository, type ModelDelegate } from '../base/base.repository';
+import type { UserWithProjects } from './user.types';
 
-export class UserRepository extends BaseRepository<User> {
+export class UserRepository extends BaseRepository<UserWithProjects> {
   constructor() {
-    super(prisma.user as unknown as ModelDelegate<User>, {
+    super(prisma.user as unknown as ModelDelegate<UserWithProjects>, {
       searchable: ['name', 'lastName', 'email'],
-      sortable: ['id', 'name', 'lastName', 'email', 'createdAt'],
+      sortable: ['id', 'name', 'lastName', 'email', 'role', 'createdAt'],
+      include: { memberProjects: true },
     });
   }
 
