@@ -25,7 +25,19 @@ comentadas en `.env.example`.
 | `npm run dev` | API en `http://localhost:3002` |
 | `npm run build` | `prisma generate && next build` |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | tests unitarios (Vitest, una pasada) |
+| `npm run test:watch` | tests en modo watch |
+| `npm run test:coverage` | tests + reporte de cobertura (`coverage/`) |
 | `npm run db:seed` | seed idempotente |
+
+## Tests unitarios
+
+Vitest (`vitest.config.ts`), sin red ni DB real: `tests/setup.ts` fija un entorno
+determinista y las dependencias externas se mockean (`tests/helpers/prisma-mock.ts` para
+Prisma; SES/OpenAI/Supabase con `vi.mock` por test). Los tests viven en `tests/`
+espejando `src/` (`tests/lib/auth/jwt.test.ts` cubre `src/lib/auth/jwt.ts`). Solo hace
+falta `npm install` previo — no requieren `.env` ni servicios levantados. CI
+(`.github/workflows/ci.yml`) corre typecheck + tests en cada push/PR a `main`.
 
 Contrato, reglas y estructura: ver [CLAUDE.md](CLAUDE.md).
 Alcance de tests unitarios: ver [docs/unit-testing-scope.md](docs/unit-testing-scope.md).

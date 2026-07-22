@@ -20,9 +20,17 @@ API **Next.js exclusiva** del panel `core-tasks-ui`. Next funciona **solo como A
 npm run dev              # next dev -> http://localhost:3002
 npm run build            # prisma generate && next build
 npm run typecheck        # tsc --noEmit
+npm test                 # vitest run (unit tests, sin red ni DB)
+npm run test:coverage    # vitest + coverage (módulos en alcance)
 npx prisma migrate dev   # nueva migración (usa DIRECT_URL)
 npm run db:seed          # seed idempotente
 ```
+
+**Tests unitarios**: Vitest. Viven en `tests/` espejando `src/`; `tests/setup.ts` fija env
+determinista (DB apuntada a un puerto muerto), Prisma se mockea con
+`tests/helpers/prisma-mock.ts` y SES/OpenAI/Supabase con `vi.mock` por test. Alcance y
+cobertura objetivo: `docs/unit-testing-scope.md`. CI en `.github/workflows/ci.yml`
+(typecheck + tests en push/PR a main).
 
 Usuario admin sembrado: **admin@coretasks.com / password**.
 

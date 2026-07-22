@@ -9,6 +9,9 @@
     "start": "next start -p 3002",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
@@ -37,7 +40,9 @@
     "@types/node": "^20.17.12",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "prisma": "^6.2.1",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
   }
 }
