@@ -7,8 +7,9 @@ import { mcpService } from './mcp.service';
 
 /**
  * Tool surface of the Core Tasks MCP (`/api/mcp`). Read tools return raw JSON for the calling
- * agent to reason over (no LLM in the loop here — that keeps latency at query speed); the only
- * mutations are moving a card and commenting, both attributed to the token's user.
+ * agent to reason over (no LLM in the loop here — that keeps latency at query speed); mutations
+ * are scoped to the board workflow — moving a card, commenting, ticking checklist items and the
+ * user's timer — and attributed to the token's user where the domain records authorship.
  */
 
 function jsonResult(data: unknown) {
@@ -144,6 +145,29 @@ export function registerMcpTools(server: McpServer): void {
     async ({ taskId, body }, extra) => {
       try {
         return jsonResult(await mcpService.commentTask(taskId, body, authUserFrom(extra.authInfo)));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'check_checklist_item',
+    {
+      description:
+        'Tick or untick one checklist item of a task (set done true/false). Item ids come from ' +
+        'get_task\'s checklist. Call it as you complete each item while implementing a card so the ' +
+        'board reflects real progress; the result includes the checklist done/total counts.',
+      inputSchema: {
+        taskId: z.string().describe('Task id'),
+        itemId: z.string().describe('Checklist item id (from get_task)'),
+        done: z.boolean().describe('true to tick, false to untick'),
+      },
+      annotations: { destructiveHint: false, idempotentHint: true },
+    },
+    async ({ taskId, itemId, done }) => {
+      try {
+        return jsonResult(await mcpService.setChecklistItem(taskId, itemId, done));
       } catch (err) {
         return errorResult(err);
       }

@@ -31,8 +31,9 @@ and authenticate (OAuth browser consent), then stop.
 5. **Implement** in the repo(s) from `targetRepos`. If a target repo is not the current working
    copy, look for a sibling folder with that name; if it is not checked out locally, say so and
    implement only the parts that belong to the current repo. Follow each repo's own CLAUDE.md
-   rules. Work through the checklist and acceptance criteria one by one; run the repo's
-   typecheck/build (and tests if present) before claiming done.
+   rules. Work through the checklist and acceptance criteria one by one, ticking each completed
+   checklist item with `check_checklist_item` (item ids come from `get_task`) so the card shows
+   live progress; run the repo's typecheck/build (and tests if present) before claiming done.
 6. **Log**: `stop_tracking` (the result gives the session and task totals), then `comment_task`
    with a short summary — what was implemented, key files touched, how each acceptance criterion
    was verified, time tracked vs `estimatedHours`, and anything left open.

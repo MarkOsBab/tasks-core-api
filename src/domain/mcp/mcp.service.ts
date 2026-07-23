@@ -6,6 +6,7 @@ import { notFound, unprocessable } from '@/lib/http-error';
 import { dmy, dmyHms, strId } from '@/resources/serialize';
 import type { AuthUser } from '@/lib/auth/context';
 import { taskService } from '../tasks/task.service';
+import { checklistItemService } from '../checklist-items/checklist-item.service';
 import { commentService } from '../comments/comment.service';
 import { timeEntryService } from '../time-entries/time-entry.service';
 import { buildTaskLink } from '../notifications/notification.service';
@@ -349,6 +350,48 @@ class McpService {
       column: target.name,
       columnIsTerminal: target.isTerminal,
       position: moved.position,
+    };
+  }
+
+  /**
+   * Ticks or unticks one checklist item of a task. Unknown item ids answer with the task's
+   * current checklist so the agent can self-correct without a second get_task round-trip.
+   */
+  async setChecklistItem(taskId: string, itemId: string, done: boolean) {
+    const tId = parseId(taskId, 'taskId');
+    const iId = parseId(itemId, 'itemId');
+    const task = await prisma.task.findFirst({ where: { id: tId, deletedAt: null } });
+    if (!task) throw notFound();
+
+    const item = await prisma.checklistItem.findFirst({
+      where: { id: iId, taskId: tId, deletedAt: null },
+    });
+    if (!item) {
+      const items = await prisma.checklistItem.findMany({
+        where: { taskId: tId, deletedAt: null },
+        orderBy: { position: 'asc' },
+      });
+      const listing =
+        items.length === 0
+          ? 'the task has no checklist items'
+          : `items: ${items.map((c) => `${strId(c.id)}=${JSON.stringify(c.title)}`).join(', ')}`;
+      throw unprocessable(`No checklist item "${itemId}" on task ${strId(tId)} (${listing}).`);
+    }
+
+    const updated = await checklistItemService.update(item, { done });
+    const items = await prisma.checklistItem.findMany({
+      where: { taskId: tId, deletedAt: null },
+    });
+    return {
+      taskId: strId(tId),
+      task: task.title,
+      itemId: strId(updated.id),
+      title: updated.title,
+      done: updated.done,
+      checklist: {
+        done: items.filter((c) => c.done).length,
+        total: items.length,
+      },
     };
   }
 
