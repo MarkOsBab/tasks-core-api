@@ -5,8 +5,10 @@ import { toBigIntOrUndefined } from '@/lib/ids';
 import { notFound, unprocessable } from '@/lib/http-error';
 import { dmy, dmyHms, strId } from '@/resources/serialize';
 import type { AuthUser } from '@/lib/auth/context';
+import { parseDateInput, TASK_PRIORITY } from '../tasks/task.schema';
 import { taskService } from '../tasks/task.service';
 import { checklistItemService } from '../checklist-items/checklist-item.service';
+import { AGENT_COMMENT_AUTHOR } from '../comments/comment.constants';
 import { commentService } from '../comments/comment.service';
 import { timeEntryService } from '../time-entries/time-entry.service';
 import { buildTaskLink } from '../notifications/notification.service';
@@ -164,6 +166,10 @@ class McpService {
         labels: true,
         assignees: true,
         checklistItems: { where: { deletedAt: null } },
+        timeEntries: {
+          where: { deletedAt: null, endedAt: { not: null } },
+          select: { durationSeconds: true },
+        },
       },
       orderBy: [{ column: { position: 'asc' } }, { position: 'asc' }],
       take: limit,
@@ -186,6 +192,8 @@ class McpService {
           total: t.checklistItems.length,
         },
         estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
+        // Estimated vs tracked of past cards is the calibration signal for new estimates.
+        trackedHours: HOURS(t.timeEntries.reduce((sum, e) => sum + (e.durationSeconds ?? 0), 0)),
         link: buildTaskLink(t),
       })),
     };
@@ -247,7 +255,7 @@ class McpService {
       comments: task.comments
         .filter((c) => !c.user.deletedAt)
         .map((c) => ({
-          author: fullName(c.user),
+          author: c.viaAgent ? AGENT_COMMENT_AUTHOR : fullName(c.user),
           at: dmyHms(c.createdAt),
           body: c.body,
         })),
@@ -319,11 +327,16 @@ class McpService {
     };
   }
 
-  /** Moves a card to a column (by name or id) landing at the end; WIP limits still apply. */
-  async moveTask(taskId: string, column: string) {
-    const existing = await taskService.find(taskId);
-    if (!existing) throw notFound();
-
+  /** Resolves a global-board column by name or id; null falls back to the first (backlog) column. */
+  private async resolveColumn(column: string | null) {
+    if (column === null) {
+      const first = await prisma.boardColumn.findFirst({
+        where: { board: { projectId: null } },
+        orderBy: { position: 'asc' },
+      });
+      if (!first) throw unprocessable('The board has no columns yet.');
+      return first;
+    }
     const isNumeric = /^\d+$/.test(column.trim());
     const target = isNumeric
       ? await prisma.boardColumn.findFirst({ where: { id: BigInt(column.trim()) } })
@@ -339,6 +352,127 @@ class McpService {
         `Unknown column "${column}". Available columns: ${columns.map((c) => c.name).join(', ')}.`,
       );
     }
+    return target;
+  }
+
+  /**
+   * Creates a card through taskService (WIP limit, end-of-column position, createdBy stamp,
+   * assignment notifications) plus an optional initial checklist and aiMetadata spec — the same
+   * machine-readable shape the AI generator emits, so agent-created follow-up cards are
+   * first-class citizens of the /work-on-tasks flow. The result carries the checklist item ids
+   * so the agent can tick them later with check_checklist_item.
+   */
+  async createTask(
+    args: {
+      title: string;
+      description?: string;
+      projectId?: string;
+      column?: string;
+      priority?: (typeof TASK_PRIORITY)[number];
+      estimatedHours?: number;
+      dueDate?: string;
+      assignToMe?: boolean;
+      checklist?: string[];
+      acceptanceCriteria?: string[];
+      technicalNotes?: string;
+      targetRepos?: string[];
+      dependsOnTaskIds?: string[];
+    },
+    user: AuthUser,
+  ) {
+    const column = await this.resolveColumn(args.column ?? null);
+
+    let project = null;
+    if (args.projectId) {
+      project = await prisma.project.findFirst({
+        where: { id: parseId(args.projectId, 'projectId'), deletedAt: null },
+      });
+      if (!project) {
+        throw unprocessable(`No project "${args.projectId}". Get project ids from find_project.`);
+      }
+    }
+
+    if (args.dueDate != null && parseDateInput(args.dueDate) === null) {
+      throw unprocessable(`Invalid dueDate "${args.dueDate}". Use DD/MM/YYYY or YYYY-MM-DD.`);
+    }
+
+    const dependsOn = args.dependsOnTaskIds ?? [];
+    if (dependsOn.length > 0) {
+      const ids = dependsOn.map((id) => parseId(id, 'dependsOnTaskIds'));
+      const live = await prisma.task.findMany({
+        where: { id: { in: ids }, deletedAt: null },
+        select: { id: true },
+      });
+      const found = new Set(live.map((t) => String(t.id)));
+      const missing = ids.filter((id) => !found.has(String(id)));
+      if (missing.length > 0) {
+        throw unprocessable(`Unknown dependsOnTaskIds: ${missing.map(String).join(', ')}.`);
+      }
+    }
+
+    const hasSpec =
+      (args.acceptanceCriteria?.length ?? 0) > 0 ||
+      (args.targetRepos?.length ?? 0) > 0 ||
+      dependsOn.length > 0 ||
+      Boolean(args.technicalNotes?.trim());
+
+    const created = await taskService.create(
+      {
+        columnId: strId(column.id),
+        projectId: project ? strId(project.id) : null,
+        title: args.title.trim(),
+        description: args.description?.trim() || null,
+        priority: args.priority ?? 'medium',
+        estimatedHours: args.estimatedHours ?? null,
+        dueDate: args.dueDate ?? null,
+        assigneeIds: args.assignToMe ? [strId(user.id)] : [],
+        ...(hasSpec
+          ? {
+              aiMetadata: {
+                acceptanceCriteria: args.acceptanceCriteria ?? [],
+                technicalNotes: args.technicalNotes?.trim() || null,
+                targetRepos: args.targetRepos ?? [],
+                ...(dependsOn.length > 0 ? { dependsOnTaskIds: dependsOn } : {}),
+              },
+            }
+          : {}),
+      },
+      user,
+    );
+
+    const titles = (args.checklist ?? []).map((t) => t.trim()).filter(Boolean);
+    if (titles.length > 0) {
+      await prisma.checklistItem.createMany({
+        data: titles.map((title, index) => ({ taskId: created.id, title, position: index })),
+      });
+    }
+    const items = await prisma.checklistItem.findMany({
+      where: { taskId: created.id, deletedAt: null },
+      orderBy: { position: 'asc' },
+    });
+
+    return {
+      id: strId(created.id),
+      title: created.title,
+      column: column.name,
+      columnIsTerminal: column.isTerminal,
+      position: created.position,
+      priority: created.priority,
+      project: project?.name ?? null,
+      dueDate: dmy(created.dueDate),
+      estimatedHours: created.estimatedHours === null ? null : Number(created.estimatedHours),
+      assignees: created.assignees.filter((u) => !u.deletedAt).map((u) => fullName(u)),
+      checklist: items.map((c) => ({ id: strId(c.id), title: c.title, done: c.done })),
+      link: buildTaskLink(created),
+    };
+  }
+
+  /** Moves a card to a column (by name or id) landing at the end; WIP limits still apply. */
+  async moveTask(taskId: string, column: string) {
+    const existing = await taskService.find(taskId);
+    if (!existing) throw notFound();
+
+    const target = await this.resolveColumn(column);
 
     const position = await prisma.task.count({
       where: { columnId: target.id, deletedAt: null, id: { not: existing.id } },
@@ -395,16 +529,19 @@ class McpService {
     };
   }
 
-  /** Adds a comment as the authenticated MCP user (assignees/creator get notified as usual). */
+  /**
+   * Adds a comment attributed to the authenticated MCP user (permissions/audit) but SIGNED as
+   * the agent ("Tasks IA") everywhere it is displayed; assignees/creator get notified as usual.
+   */
   async commentTask(taskId: string, body: string, user: AuthUser) {
     const id = parseId(taskId, 'taskId');
     const task = await prisma.task.findFirst({ where: { id, deletedAt: null } });
     if (!task) throw notFound();
-    const created = await commentService.create({ taskId: strId(id), body }, user);
+    const created = await commentService.create({ taskId: strId(id), body, viaAgent: true }, user);
     return {
       id: strId(created.id),
       taskId: strId(id),
-      author: fullName(created.user),
+      author: created.viaAgent ? AGENT_COMMENT_AUTHOR : fullName(created.user),
       at: dmyHms(created.createdAt),
       body: created.body,
     };

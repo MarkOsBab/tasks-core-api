@@ -233,6 +233,7 @@ model Comment {
   id        BigInt    @id @default(autoincrement())
   taskId    BigInt    @map("task_id")
   userId    BigInt    @map("user_id") // author, stamped from the auth user on create
+  viaAgent  Boolean   @default(false) @map("via_agent") // posted by an AI agent (MCP): shown as "Tasks IA"
   body      String    @db.Text
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")

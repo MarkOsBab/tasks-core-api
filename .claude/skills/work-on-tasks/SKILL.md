@@ -43,6 +43,11 @@ and authenticate (OAuth browser consent), then stop.
 ## Rules
 
 - One card at a time; finish (or explicitly park) before starting the next.
+- Out-of-scope work you discover does not expand the current card: capture it as a follow-up
+  card with `create_task` (same projectId, acceptanceCriteria/targetRepos, and
+  `dependsOnTaskIds` pointing at the current card if it builds on it), then mention it in the
+  closing comment. Calibrate its `estimatedHours` against the real trackedHours of similar
+  finished cards (`list_tasks` shows estimated vs tracked) — never pad to human-scale numbers.
 - Never leave a timer running after finishing or parking a card (`stop_tracking`).
 - Never mark a card done with failing builds or unverified criteria.
 - Comments on cards are for the team: write them in the card's language (usually Spanish),

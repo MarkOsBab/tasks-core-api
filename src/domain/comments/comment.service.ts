@@ -1,6 +1,7 @@
 import type { AuthUser } from '@/lib/auth/context';
 import { BaseService } from '../base/base.service';
 import { buildTaskLink, notificationService } from '../notifications/notification.service';
+import { AGENT_COMMENT_AUTHOR } from './comment.constants';
 import { CommentRepository, commentRepository } from './comment.repository';
 import type { CommentWithRelations } from './comment.types';
 
@@ -37,7 +38,9 @@ class CommentService extends BaseService<CommentWithRelations> {
     const task = comment.task;
     if (!task) return;
     const actorId = actor?.id ?? comment.userId;
-    const actorName = `${comment.user.name} ${comment.user.lastName ?? ''}`.trim();
+    const actorName = comment.viaAgent
+      ? AGENT_COMMENT_AUTHOR
+      : `${comment.user.name} ${comment.user.lastName ?? ''}`.trim();
     const recipients = new Set<bigint>();
     for (const assignee of task.assignees) recipients.add(assignee.id);
     if (task.createdById != null) recipients.add(task.createdById);

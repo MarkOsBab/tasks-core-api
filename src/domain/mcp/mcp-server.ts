@@ -3,13 +3,15 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { HttpError, unauthorized } from '@/lib/http-error';
 import type { AuthUser } from '@/lib/auth/context';
+import { TASK_PRIORITY } from '../tasks/task.schema';
 import { mcpService } from './mcp.service';
 
 /**
  * Tool surface of the Core Tasks MCP (`/api/mcp`). Read tools return raw JSON for the calling
  * agent to reason over (no LLM in the loop here — that keeps latency at query speed); mutations
- * are scoped to the board workflow — moving a card, commenting, ticking checklist items and the
- * user's timer — and attributed to the token's user where the domain records authorship.
+ * are scoped to the board workflow — creating a card, moving it, commenting, ticking checklist
+ * items and the user's timer — and attributed to the token's user where the domain records
+ * authorship.
  */
 
 function jsonResult(data: unknown) {
@@ -69,7 +71,9 @@ export function registerMcpTools(server: McpServer): void {
       description:
         'List kanban tasks. By default returns PENDING tasks (cards in non-terminal columns), ordered by ' +
         'board column and position. Filter by projectId (from find_project), column name, assignee ' +
-        '(name or email fragment) or title search. Use get_task for the full implementation-ready detail.',
+        '(name or email fragment) or title search. Each card carries estimatedHours AND trackedHours — ' +
+        'list done/reviewed cards to calibrate a new estimate against real durations. Use get_task for ' +
+        'the full implementation-ready detail.',
       inputSchema: {
         projectId: z.string().optional().describe('Scope to one project (id from find_project)'),
         status: z.enum(['pending', 'done', 'all']).optional().describe('Default: pending'),
@@ -109,6 +113,74 @@ export function registerMcpTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'create_task',
+    {
+      description:
+        'Create a new card on the kanban board, attributed to the MCP token\'s user. Use it to capture ' +
+        'a requirement as a card before implementing it, or to log follow-up work discovered while on ' +
+        'another card (link it via dependsOnTaskIds). The column defaults to the first (backlog) column. ' +
+        'acceptanceCriteria/technicalNotes/targetRepos are stored as the card\'s machine-readable spec ' +
+        '(aiMetadata, shown by get_task). The result includes the checklist item ids for check_checklist_item.',
+      inputSchema: {
+        title: z.string().min(1).max(255).describe('Card title'),
+        description: z.string().max(20000).optional().describe('Card description (plain text)'),
+        projectId: z
+          .string()
+          .optional()
+          .describe('Project to tag the card with (id from find_project)'),
+        column: z
+          .string()
+          .optional()
+          .describe('Target column name or id (see list_columns); default: first column'),
+        priority: z.enum(TASK_PRIORITY).optional().describe('Default: medium'),
+        estimatedHours: z
+          .number()
+          .min(0)
+          .optional()
+          .describe(
+            'Estimate at AI-assisted pace CALIBRATED against history: check estimatedHours vs ' +
+              'trackedHours of similar finished cards (list_tasks) first — typical dev cards have ' +
+              'really taken well under 1h, so do not pad to human-scale numbers',
+          ),
+        dueDate: z.string().optional().describe('Due date, DD/MM/YYYY or YYYY-MM-DD'),
+        assignToMe: z
+          .boolean()
+          .optional()
+          .describe('Assign the card to the MCP token\'s user (default false)'),
+        checklist: z
+          .array(z.string().min(1).max(255))
+          .max(50)
+          .optional()
+          .describe('Initial checklist item titles, in order'),
+        acceptanceCriteria: z
+          .array(z.string().max(500))
+          .max(30)
+          .optional()
+          .describe('Definition of done, one verifiable statement per entry'),
+        technicalNotes: z.string().max(5000).optional().describe('Implementation hints for the agent'),
+        targetRepos: z
+          .array(z.string().max(255))
+          .max(10)
+          .optional()
+          .describe('Repository names the change belongs in (see the project\'s repositories)'),
+        dependsOnTaskIds: z
+          .array(z.string())
+          .max(20)
+          .optional()
+          .describe('Existing task ids this card is blocked by until they reach the done column'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async (args, extra) => {
+      try {
+        return jsonResult(await mcpService.createTask(args, authUserFrom(extra.authInfo)));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
     'move_task',
     {
       description:
@@ -134,8 +206,9 @@ export function registerMcpTools(server: McpServer): void {
     'comment_task',
     {
       description:
-        'Add a plain-text comment to a task, attributed to the MCP token\'s user. Use it to log what was ' +
-        'implemented, decisions taken, or questions for the team. Assignees and the card creator are notified.',
+        'Add a plain-text comment to a task, displayed as authored by "Tasks IA" (the MCP token\'s user ' +
+        'stays as the underlying author for permissions). Use it to log what was implemented, decisions ' +
+        'taken, or questions for the team. Assignees and the card creator are notified.',
       inputSchema: {
         taskId: z.string().describe('Task id'),
         body: z.string().min(1).max(10000).describe('Comment text (plain text)'),

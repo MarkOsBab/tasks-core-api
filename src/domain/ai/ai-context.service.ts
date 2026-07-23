@@ -48,13 +48,29 @@ export interface AiWorkspaceContext {
     labels: string[];
     assignees: string[];
     checklistSize: number;
+    estimatedHours: number | null;
     trackedHours: number | null;
   }[];
+  // Ground truth for calibrating estimatedHours: cards that carry BOTH an estimate and real
+  // closed tracked time. Review-column cards count too — moving to done often lags the finish.
+  estimation: {
+    samples: {
+      title: string;
+      column: string;
+      done: boolean;
+      project: string | null;
+      labels: string[];
+      estimatedHours: number;
+      trackedHours: number;
+    }[];
+    medianTrackedToEstimateRatio: number | null; // <1 = past estimates ran high by that factor
+  };
   proposals: { title: string; status: string; project: string | null; summary: string | null }[];
 }
 
 const SAMPLE_TASKS = 40;
 const SAMPLE_PROPOSALS = 12;
+const ESTIMATION_SAMPLES = 30;
 // Wider window than the prompt sample: per-user history (specialization, tracked hours) is
 // aggregated in JS over these and only the aggregates reach the prompt.
 const HISTORY_TASKS = 200;
@@ -86,8 +102,17 @@ interface ProjectStatsBucket {
 
 class AiContextService {
   async build(): Promise<AiWorkspaceContext> {
-    const [globalBoard, labels, users, projects, tasks, proposals, historyTasks, projectTasks] =
-      await Promise.all([
+    const [
+      globalBoard,
+      labels,
+      users,
+      projects,
+      tasks,
+      proposals,
+      historyTasks,
+      projectTasks,
+      estimationTasks,
+    ] = await Promise.all([
       // Single-board model: only the global board exists; its columns are the valid targets.
       prisma.board.findFirst({
         where: { projectId: null },
@@ -153,6 +178,29 @@ class AiContextService {
           column: { select: { isTerminal: true } },
           labels: { select: { name: true, deletedAt: true } },
           assignees: { select: { name: true, lastName: true, deletedAt: true } },
+          timeEntries: {
+            where: { deletedAt: null },
+            select: { startedAt: true, endedAt: true },
+          },
+        },
+      }),
+      // Estimation ground truth: cards with an estimate AND at least one closed time entry,
+      // regardless of column (a review-column card is already implemented — waiting for the
+      // move to done would starve the calibration of exactly the freshest signal).
+      prisma.task.findMany({
+        where: {
+          deletedAt: null,
+          estimatedHours: { not: null },
+          timeEntries: { some: { deletedAt: null, endedAt: { not: null } } },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: ESTIMATION_SAMPLES,
+        select: {
+          title: true,
+          estimatedHours: true,
+          column: { select: { name: true, isTerminal: true } },
+          project: { select: { name: true, deletedAt: true } },
+          labels: { select: { name: true, deletedAt: true } },
           timeEntries: {
             where: { deletedAt: null },
             select: { startedAt: true, endedAt: true },
@@ -234,6 +282,31 @@ class AiContextService {
       }
     }
 
+    // Per-card tracked/estimated ratios; the median (robust to outliers) tells the model how
+    // far off past estimates ran so new ones can be scaled to the real pace.
+    const estimationSamples = estimationTasks
+      .map((task) => ({
+        title: task.title,
+        column: task.column.name,
+        done: task.column.isTerminal,
+        project: task.project && !task.project.deletedAt ? task.project.name : null,
+        labels: task.labels.filter((l) => !l.deletedAt).map((l) => l.name),
+        estimatedHours: Number(task.estimatedHours),
+        trackedHours: trackedHours(task.timeEntries) ?? 0,
+      }))
+      .filter((sample) => sample.estimatedHours > 0 && sample.trackedHours > 0);
+    const ratios = estimationSamples
+      .map((sample) => sample.trackedHours / sample.estimatedHours)
+      .sort((a, b) => a - b);
+    const medianRatio =
+      ratios.length === 0
+        ? null
+        : Math.round(
+            (ratios.length % 2 === 1
+              ? ratios[(ratios.length - 1) / 2]
+              : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2) * 100,
+          ) / 100;
+
     return {
       columns: (globalBoard?.columns ?? []).map((column) => ({
         id: strId(column.id),
@@ -306,8 +379,13 @@ class AiContextService {
           .filter((u) => !u.deletedAt)
           .map((u) => `${u.name} ${u.lastName ?? ''}`.trim()),
         checklistSize: task.checklistItems.length,
+        estimatedHours: task.estimatedHours === null ? null : Number(task.estimatedHours),
         trackedHours: trackedHours(task.timeEntries),
       })),
+      estimation: {
+        samples: estimationSamples,
+        medianTrackedToEstimateRatio: medianRatio,
+      },
       proposals: proposals.map((proposal) => ({
         title: proposal.title,
         status: proposal.status,
