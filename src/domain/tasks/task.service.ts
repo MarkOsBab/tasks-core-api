@@ -148,6 +148,8 @@ class TaskService extends BaseService<TaskWithRelations> {
       prepared.dueDate =
         typeof prepared.dueDate === 'string' ? parseDateInput(prepared.dueDate) : null;
     }
+    // The column is non-nullable: an unchecked/absent checkbox arrives as null and means false.
+    if ('aiDelegable' in prepared) prepared.aiDelegable = prepared.aiDelegable === true;
     if (prepared.position == null) {
       const movingColumn =
         existing != null && prepared.columnId != null && prepared.columnId !== existing.columnId;

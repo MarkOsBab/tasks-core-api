@@ -48,6 +48,10 @@ and authenticate (OAuth browser consent), then stop.
   `dependsOnTaskIds` pointing at the current card if it builds on it), then mention it in the
   closing comment. Calibrate its `estimatedHours` against the real trackedHours of similar
   finished cards (`list_tasks` shows estimated vs tracked) — never pad to human-scale numbers.
+- Before implementing, read `projectLearnings` in `get_task` (also in `find_project`): past
+  runs already paid for those lessons. When closing a card whose implementation surprised you,
+  record the non-obvious durable fact with `add_learning` (a gotcha, constraint or decision —
+  never session trivia, never what the repo's CLAUDE.md already documents).
 - Never leave a timer running after finishing or parking a card (`stop_tracking`).
 - Never mark a card done with failing builds or unverified criteria.
 - Comments on cards are for the team: write them in the card's language (usually Spanish),

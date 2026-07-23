@@ -1,0 +1,55 @@
+name: AI Runner
+
+# Nightly autonomous agent: picks ONE aiDelegable card of this repo's project from the Core
+# Tasks board, implements it on a task-<id>-* branch and opens a PR. The GitHub webhook
+# (POST /api/webhooks/github) then links the PR to the card and moves it to review.
+#
+# Required repo secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN  -> `claude setup-token` (Claude subscription auth for CI)
+#   CORE_TASKS_MCP_TOKEN     -> POST /api/auth/mcp-token (90-day Core Tasks MCP JWT)
+on:
+  schedule:
+    - cron: '0 6 * * *' # 06:00 UTC: quiet hours, does not compete with interactive usage
+  workflow_dispatch: {}
+
+concurrency: ai-runner # never two runners at once on this repo
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci # postinstall runs prisma generate (schema only, no DB needed)
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Register the Core Tasks MCP server
+        run: >
+          claude mcp add --transport http core-tasks
+          https://tasks-core-api.vercel.app/api/mcp
+          --header "Authorization: Bearer ${{ secrets.CORE_TASKS_MCP_TOKEN }}"
+
+      - name: Git identity
+        run: |
+          git config user.name "Tasks IA"
+          git config user.email "tasks-ia@users.noreply.github.com"
+
+      - name: Run the agent
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          claude -p "$(cat .github/ai-runner-prompt.md)" \
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep,TodoWrite,mcp__core-tasks" \
+            --permission-mode acceptEdits \
+            --max-turns 250

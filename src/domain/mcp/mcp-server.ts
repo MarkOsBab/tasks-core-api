@@ -81,6 +81,10 @@ export function registerMcpTools(server: McpServer): void {
         assignee: z.string().optional().describe('Assignee name or email fragment'),
         search: z.string().optional().describe('Task title search'),
         limit: z.number().int().min(1).max(100).optional().describe('Max results, default 50'),
+        delegableOnly: z
+          .boolean()
+          .optional()
+          .describe('Only cards flagged aiDelegable (opted-in for the autonomous AI runner)'),
       },
       annotations: { readOnlyHint: true },
     },
@@ -147,6 +151,10 @@ export function registerMcpTools(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Assign the card to the MCP token\'s user (default false)'),
+        aiDelegable: z
+          .boolean()
+          .optional()
+          .describe('Flag the card as delegable: the autonomous AI runner may pick it up unattended (default false)'),
         checklist: z
           .array(z.string().min(1).max(255))
           .max(50)
@@ -174,6 +182,70 @@ export function registerMcpTools(server: McpServer): void {
     async (args, extra) => {
       try {
         return jsonResult(await mcpService.createTask(args, authUserFrom(extra.authInfo)));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'update_task',
+    {
+      description:
+        'Update fields of an existing card and/or append checklist items. Only the fields you pass ' +
+        'are touched; the aiMetadata spec keys (acceptanceCriteria, technicalNotes, targetRepos, ' +
+        'dependsOnTaskIds) MERGE into the existing spec without clobbering unsent keys. Use it to ' +
+        'groom cards: enrich the spec, recalibrate estimatedHours against trackedHours of similar ' +
+        'finished cards, or flag a card aiDelegable. Moving between columns stays in move_task.',
+      inputSchema: {
+        taskId: z.string().describe('Task id'),
+        title: z.string().min(1).max(255).optional().describe('New card title'),
+        description: z
+          .string()
+          .max(20000)
+          .optional()
+          .describe('Replaces the card description (plain text)'),
+        priority: z.enum(TASK_PRIORITY).optional(),
+        estimatedHours: z
+          .number()
+          .min(0)
+          .optional()
+          .describe(
+            'New estimate at AI-assisted pace, calibrated against the trackedHours of similar ' +
+              'finished cards (list_tasks shows estimated vs tracked)',
+          ),
+        dueDate: z.string().optional().describe('Due date, DD/MM/YYYY or YYYY-MM-DD'),
+        aiDelegable: z
+          .boolean()
+          .optional()
+          .describe('Whether the autonomous AI runner may pick this card up unattended'),
+        acceptanceCriteria: z
+          .array(z.string().max(500))
+          .max(30)
+          .optional()
+          .describe('Replaces the spec\'s definition of done (other spec keys survive)'),
+        technicalNotes: z.string().max(5000).optional().describe('Implementation hints for the agent'),
+        targetRepos: z
+          .array(z.string().max(255))
+          .max(10)
+          .optional()
+          .describe('Repository names the change belongs in'),
+        dependsOnTaskIds: z
+          .array(z.string())
+          .max(20)
+          .optional()
+          .describe('Existing task ids this card is blocked by'),
+        addChecklistItems: z
+          .array(z.string().min(1).max(255))
+          .max(50)
+          .optional()
+          .describe('Appended to the end of the checklist; titles it already has are skipped'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async (args, extra) => {
+      try {
+        return jsonResult(await mcpService.updateTask(args, authUserFrom(extra.authInfo)));
       } catch (err) {
         return errorResult(err);
       }
@@ -298,12 +370,43 @@ export function registerMcpTools(server: McpServer): void {
   );
 
   server.registerTool(
+    'add_learning',
+    {
+      description:
+        'Record ONE durable, non-obvious fact about a project (institutional memory): a gotcha, a ' +
+        'constraint, a decision that future work must respect. Call it when closing a card whose ' +
+        'implementation surprised you. Future agents see these in get_task (projectLearnings) and ' +
+        'find_project, so write facts that stay true — never session trivia, never anything already ' +
+        'documented in the repo\'s CLAUDE.md. Exact duplicates on the same project are not re-inserted.',
+      inputSchema: {
+        projectId: z.string().describe('Project id (from find_project)'),
+        body: z
+          .string()
+          .min(10)
+          .max(2000)
+          .describe('The fact, one or two sentences, in the project\'s language (usually Spanish)'),
+        taskId: z.string().optional().describe('Card that produced the learning (optional)'),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async (args, extra) => {
+      try {
+        return jsonResult(await mcpService.addLearning(args, authUserFrom(extra.authInfo)));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.registerTool(
     'get_project_summary',
     {
       description:
         'Overview of one project: status, members with roles, estimated vs tracked hours, task counts by ' +
-        'column and by assignee, and every proposal with amount/currency/status (the budget picture). ' +
-        'Use this to answer questions about project health, budgets and workload.',
+        'column and by assignee, every proposal with amount/currency/status (the budget picture), and a ' +
+        'data-driven `forecast` (remaining estimated hours corrected by the real tracked/estimated ratio, ' +
+        'recent velocity and projected finish date — no LLM, pure history). Use this to answer questions ' +
+        'about project health, budgets, workload and delivery dates.',
       inputSchema: { projectId: z.string().describe('Project id (from find_project)') },
       annotations: { readOnlyHint: true },
     },

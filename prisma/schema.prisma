@@ -67,6 +67,7 @@ model User {
   notifications          Notification[] @relation("NotificationRecipient")
   triggeredNotifications Notification[] @relation("NotificationActor")
   passwordResetTokens    PasswordResetToken[]
+  learnings              ProjectLearning[] @relation("LearningAuthor")
 
   @@map("users")
 }
@@ -126,6 +127,7 @@ model Project {
   tasks     Task[]
   board     Board?
   members   User[]     @relation("ProjectMembers") // implicit m2m; Prisma manages the _ProjectMembers pivot
+  learnings ProjectLearning[]
 
   @@map("projects")
 }
@@ -162,6 +164,9 @@ model Task {
   createdById BigInt?      @map("created_by_id") // auth user that created the card
   aiMetadata  Json?        @map("ai_metadata") // machine-readable implementation spec (AI-generated cards): acceptanceCriteria, technicalNotes, targetRepos, dependsOnTaskIds
   estimatedHours Decimal?  @map("estimated_hours") @db.Decimal(6, 2) // effort estimate; AI-generated cards assume AI-assisted implementation (Claude Code)
+  prUrl       String?      @map("pr_url") @db.Text // linked GitHub PR (set by the GitHub webhook when a PR referencing the card opens)
+  aiDelegable Boolean      @default(false) @map("ai_delegable") // opted-in for the autonomous AI runner: it may pick this card up unattended
+  viaAgent    Boolean      @default(false) @map("via_agent") // card created by an AI agent (MCP create_task); feeds the AI activity panel
 
   createdAt DateTime? @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")
@@ -177,6 +182,7 @@ model Task {
   checklistItems ChecklistItem[]
   attachments    TaskAttachment[]
   notifications  Notification[]
+  learnings      ProjectLearning[]
 
   @@index([columnId, position])
   @@index([projectId])
@@ -216,6 +222,7 @@ model TimeEntry {
   startedAt       DateTime  @map("started_at")
   endedAt         DateTime? @map("ended_at") // null = timer still running
   durationSeconds Int?      @map("duration_seconds") // closed-entry length, kept in sync by the service (Prisma can't filter on ended_at - started_at)
+  viaAgent        Boolean   @default(false) @map("via_agent") // timer started by an AI agent (MCP start_tracking); splits AI vs human hours
   createdAt       DateTime? @default(now()) @map("created_at")
   updatedAt       DateTime? @updatedAt @map("updated_at")
   deletedAt       DateTime? @map("deleted_at")
@@ -298,6 +305,28 @@ model Notification {
 
   @@index([userId, readAt]) // unread-count + inbox scans
   @@map("notifications")
+}
+
+// Institutional memory per project: non-obvious gotchas recorded when a card closes (mostly by
+// agents via the MCP add_learning tool), surfaced to every future agent in get_task/find_project
+// so each run starts knowing what past runs learned the hard way.
+model ProjectLearning {
+  id          BigInt    @id @default(autoincrement())
+  projectId   BigInt    @map("project_id")
+  taskId      BigInt?   @map("task_id") // card that produced the learning
+  body        String    @db.VarChar(2000)
+  createdById BigInt?   @map("created_by_id")
+  viaAgent    Boolean   @default(false) @map("via_agent") // recorded by an AI agent (MCP)
+  createdAt   DateTime? @default(now()) @map("created_at")
+  updatedAt   DateTime? @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  project   Project @relation(fields: [projectId], references: [id])
+  task      Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdBy User?   @relation("LearningAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@map("project_learnings")
 }
 
 model Board {

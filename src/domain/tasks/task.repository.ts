@@ -25,6 +25,9 @@ function applyTaskFilters(filters: Record<string, string>): Record<string, unkno
     if (clientId !== undefined) where.project = { clientId };
   }
   if (filters.priority) where.priority = filters.priority;
+  // ?delegable=true|false -> cards the autonomous AI runner may (not) pick up.
+  if (filters.delegable === 'true') where.aiDelegable = true;
+  else if (filters.delegable === 'false') where.aiDelegable = false;
   // ?assigneeIds=1,2 -> tasks assigned to at least one of those users.
   if (filters.assigneeIds !== undefined && filters.assigneeIds !== '') {
     const assigneeIds = filters.assigneeIds

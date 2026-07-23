@@ -11,6 +11,7 @@ import { checklistItemService } from '../checklist-items/checklist-item.service'
 import { AGENT_COMMENT_AUTHOR } from '../comments/comment.constants';
 import { commentService } from '../comments/comment.service';
 import { timeEntryService } from '../time-entries/time-entry.service';
+import { projectForecastService } from '../projects/project-forecast.service';
 import { buildTaskLink } from '../notifications/notification.service';
 
 /**
@@ -108,6 +109,17 @@ class McpService {
         : [];
     const openByProject = new Map(counts.map((c) => [String(c.projectId), c._count._all]));
 
+    // Working-copy matches carry the project's institutional memory so an agent (or the
+    // autonomous runner) starts every run knowing what past runs learned the hard way. The
+    // no-args listing skips it to stay light.
+    const withLearnings = repoUrl !== null && matched.length > 0 && matched.length <= 3;
+    const learningsByProject = new Map<string, Awaited<ReturnType<typeof this.recentLearnings>>>();
+    if (withLearnings) {
+      for (const p of matched) {
+        learningsByProject.set(String(p.id), await this.recentLearnings(p.id));
+      }
+    }
+
     return {
       matchedBy,
       projects: matched.map((p) => ({
@@ -123,7 +135,71 @@ class McpService {
           role: u.role,
         })),
         openTaskCount: openByProject.get(String(p.id)) ?? 0,
+        ...(withLearnings ? { learnings: learningsByProject.get(String(p.id)) ?? [] } : {}),
       })),
+    };
+  }
+
+  /** Latest institutional-memory entries of a project, newest first. */
+  private async recentLearnings(projectId: bigint, take = 15) {
+    const learnings = await prisma.projectLearning.findMany({
+      where: { projectId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return learnings.map((l) => ({
+      id: strId(l.id),
+      body: l.body,
+      taskId: l.taskId != null ? strId(l.taskId) : null,
+      viaAgent: l.viaAgent,
+      at: dmy(l.createdAt),
+    }));
+  }
+
+  /**
+   * Records one institutional-memory entry on a project. Exact-duplicate bodies (case-insensitive,
+   * same project) are not re-inserted — the existing entry comes back flagged `duplicated`.
+   */
+  async addLearning(args: { projectId: string; body: string; taskId?: string }, user: AuthUser) {
+    const projectId = parseId(args.projectId, 'projectId');
+    const project = await prisma.project.findFirst({ where: { id: projectId, deletedAt: null } });
+    if (!project) {
+      throw unprocessable(`No project "${args.projectId}". Get project ids from find_project.`);
+    }
+    let taskId: bigint | null = null;
+    if (args.taskId) {
+      taskId = parseId(args.taskId, 'taskId');
+      const task = await prisma.task.findFirst({ where: { id: taskId, deletedAt: null } });
+      if (!task) throw unprocessable(`Unknown taskId "${args.taskId}".`);
+    }
+    const body = args.body.trim();
+    if (!body) throw unprocessable('The learning body cannot be empty.');
+
+    const existing = await prisma.projectLearning.findFirst({
+      where: { projectId, deletedAt: null, body: { equals: body, mode: 'insensitive' } },
+    });
+    if (existing) {
+      return {
+        id: strId(existing.id),
+        project: project.name,
+        body: existing.body,
+        duplicated: true,
+      };
+    }
+
+    const created = await prisma.projectLearning.create({
+      data: { projectId, taskId, body, createdById: user.id, viaAgent: true },
+    });
+    const total = await prisma.projectLearning.count({
+      where: { projectId, deletedAt: null },
+    });
+    return {
+      id: strId(created.id),
+      project: project.name,
+      body: created.body,
+      taskId: taskId != null ? strId(taskId) : null,
+      at: dmy(created.createdAt),
+      projectLearningCount: total,
     };
   }
 
@@ -135,9 +211,11 @@ class McpService {
     assignee?: string;
     search?: string;
     limit?: number;
+    delegableOnly?: boolean;
   }) {
     const where: Prisma.TaskWhereInput = { deletedAt: null };
     if (args.projectId) where.projectId = parseId(args.projectId, 'projectId');
+    if (args.delegableOnly) where.aiDelegable = true;
     const column: Prisma.BoardColumnWhereInput = {};
     const status = args.status ?? 'pending';
     if (status !== 'all') column.isTerminal = status === 'done';
@@ -194,6 +272,7 @@ class McpService {
         estimatedHours: t.estimatedHours === null ? null : Number(t.estimatedHours),
         // Estimated vs tracked of past cards is the calibration signal for new estimates.
         trackedHours: HOURS(t.timeEntries.reduce((sum, e) => sum + (e.durationSeconds ?? 0), 0)),
+        aiDelegable: t.aiDelegable,
         link: buildTaskLink(t),
       })),
     };
@@ -225,6 +304,8 @@ class McpService {
     const project = task.project && !task.project.deletedAt ? task.project : null;
     const client = project?.client && !project.client.deletedAt ? project.client : null;
     const trackedSeconds = task.timeEntries.reduce((sum, e) => sum + (e.durationSeconds ?? 0), 0);
+    // Institutional memory: what past runs on this project learned the hard way.
+    const projectLearnings = project ? await this.recentLearnings(project.id) : [];
 
     return {
       id: strId(task.id),
@@ -247,6 +328,11 @@ class McpService {
       // Machine-readable spec of AI-generated cards: acceptanceCriteria, technicalNotes,
       // targetRepos and dependsOnTaskIds (implement those first). Null on hand-made cards.
       aiMetadata: task.aiMetadata ?? null,
+      // GitHub PR linked by the webhook (branch task-<id>-* or #<id> mention); review the diff there.
+      prUrl: task.prUrl ?? null,
+      aiDelegable: task.aiDelegable,
+      // Read these BEFORE implementing: gotchas recorded by past runs on this project.
+      projectLearnings,
       checklist: task.checklistItems.map((c) => ({
         id: strId(c.id),
         title: c.title,
@@ -278,6 +364,8 @@ class McpService {
 
     const previous = await timeEntryService.findRunning(user.id);
     const entry = await timeEntryService.start(user.id, id, description);
+    // Agent-started timers are flagged so the AI activity panel can split AI vs human hours.
+    await prisma.timeEntry.update({ where: { id: entry.id }, data: { viaAgent: true } });
     return {
       taskId: strId(id),
       title: task.title,
@@ -372,6 +460,7 @@ class McpService {
       estimatedHours?: number;
       dueDate?: string;
       assignToMe?: boolean;
+      aiDelegable?: boolean;
       checklist?: string[];
       acceptanceCriteria?: string[];
       technicalNotes?: string;
@@ -397,18 +486,7 @@ class McpService {
     }
 
     const dependsOn = args.dependsOnTaskIds ?? [];
-    if (dependsOn.length > 0) {
-      const ids = dependsOn.map((id) => parseId(id, 'dependsOnTaskIds'));
-      const live = await prisma.task.findMany({
-        where: { id: { in: ids }, deletedAt: null },
-        select: { id: true },
-      });
-      const found = new Set(live.map((t) => String(t.id)));
-      const missing = ids.filter((id) => !found.has(String(id)));
-      if (missing.length > 0) {
-        throw unprocessable(`Unknown dependsOnTaskIds: ${missing.map(String).join(', ')}.`);
-      }
-    }
+    await this.assertLiveDependencies(dependsOn);
 
     const hasSpec =
       (args.acceptanceCriteria?.length ?? 0) > 0 ||
@@ -425,6 +503,8 @@ class McpService {
         priority: args.priority ?? 'medium',
         estimatedHours: args.estimatedHours ?? null,
         dueDate: args.dueDate ?? null,
+        aiDelegable: args.aiDelegable === true,
+        viaAgent: true, // agent-created card; feeds the AI activity panel
         assigneeIds: args.assignToMe ? [strId(user.id)] : [],
         ...(hasSpec
           ? {
@@ -464,6 +544,131 @@ class McpService {
       assignees: created.assignees.filter((u) => !u.deletedAt).map((u) => fullName(u)),
       checklist: items.map((c) => ({ id: strId(c.id), title: c.title, done: c.done })),
       link: buildTaskLink(created),
+    };
+  }
+
+  /** Every dependency id must resolve to a live task; a card can never depend on itself. */
+  private async assertLiveDependencies(dependsOn: string[], selfId?: bigint): Promise<void> {
+    if (dependsOn.length === 0) return;
+    const ids = dependsOn.map((id) => parseId(id, 'dependsOnTaskIds'));
+    if (selfId != null && ids.some((id) => id === selfId)) {
+      throw unprocessable('A task cannot depend on itself.');
+    }
+    const live = await prisma.task.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true },
+    });
+    const found = new Set(live.map((t) => String(t.id)));
+    const missing = ids.filter((id) => !found.has(String(id)));
+    if (missing.length > 0) {
+      throw unprocessable(`Unknown dependsOnTaskIds: ${missing.map(String).join(', ')}.`);
+    }
+  }
+
+  /**
+   * Partial edit of a card (grooming): only the fields present are touched, the aiMetadata spec
+   * keys MERGE into the existing spec (unsent keys survive), and addChecklistItems appends
+   * position-ordered items skipping titles the checklist already has. Moves stay in move_task.
+   */
+  async updateTask(
+    args: {
+      taskId: string;
+      title?: string;
+      description?: string;
+      priority?: (typeof TASK_PRIORITY)[number];
+      estimatedHours?: number;
+      dueDate?: string;
+      aiDelegable?: boolean;
+      acceptanceCriteria?: string[];
+      technicalNotes?: string;
+      targetRepos?: string[];
+      dependsOnTaskIds?: string[];
+      addChecklistItems?: string[];
+    },
+    user: AuthUser,
+  ) {
+    const existing = await taskService.find(args.taskId);
+    if (!existing) throw notFound();
+
+    if (args.dueDate != null && parseDateInput(args.dueDate) === null) {
+      throw unprocessable(`Invalid dueDate "${args.dueDate}". Use DD/MM/YYYY or YYYY-MM-DD.`);
+    }
+    await this.assertLiveDependencies(args.dependsOnTaskIds ?? [], existing.id);
+
+    const data: Record<string, unknown> = {};
+    if (args.title !== undefined) data.title = args.title.trim();
+    if (args.description !== undefined) data.description = args.description.trim() || null;
+    if (args.priority !== undefined) data.priority = args.priority;
+    if (args.estimatedHours !== undefined) data.estimatedHours = args.estimatedHours;
+    if (args.dueDate !== undefined) data.dueDate = args.dueDate;
+    if (args.aiDelegable !== undefined) data.aiDelegable = args.aiDelegable;
+
+    const touchesSpec =
+      args.acceptanceCriteria !== undefined ||
+      args.technicalNotes !== undefined ||
+      args.targetRepos !== undefined ||
+      args.dependsOnTaskIds !== undefined;
+    if (touchesSpec) {
+      const current =
+        existing.aiMetadata && typeof existing.aiMetadata === 'object'
+          ? (existing.aiMetadata as Record<string, unknown>)
+          : {};
+      data.aiMetadata = {
+        ...current,
+        ...(args.acceptanceCriteria !== undefined
+          ? { acceptanceCriteria: args.acceptanceCriteria }
+          : {}),
+        ...(args.technicalNotes !== undefined
+          ? { technicalNotes: args.technicalNotes.trim() || null }
+          : {}),
+        ...(args.targetRepos !== undefined ? { targetRepos: args.targetRepos } : {}),
+        ...(args.dependsOnTaskIds !== undefined
+          ? { dependsOnTaskIds: args.dependsOnTaskIds }
+          : {}),
+      };
+    }
+
+    const updated =
+      Object.keys(data).length > 0 ? await taskService.update(existing, data, user) : existing;
+
+    let items = await prisma.checklistItem.findMany({
+      where: { taskId: updated.id, deletedAt: null },
+      orderBy: { position: 'asc' },
+    });
+    const known = new Set(items.map((c) => c.title.trim().toLowerCase()));
+    const additions = (args.addChecklistItems ?? [])
+      .map((t) => t.trim())
+      .filter((t) => t && !known.has(t.toLowerCase()));
+    if (additions.length > 0) {
+      await prisma.checklistItem.createMany({
+        data: additions.map((title, index) => ({
+          taskId: updated.id,
+          title,
+          position: items.length + index,
+        })),
+      });
+      items = await prisma.checklistItem.findMany({
+        where: { taskId: updated.id, deletedAt: null },
+        orderBy: { position: 'asc' },
+      });
+    }
+
+    const project = updated.project && !updated.project.deletedAt ? updated.project : null;
+    return {
+      id: strId(updated.id),
+      title: updated.title,
+      column: updated.column.name,
+      columnIsTerminal: updated.column.isTerminal,
+      position: updated.position,
+      priority: updated.priority,
+      project: project?.name ?? null,
+      dueDate: dmy(updated.dueDate),
+      estimatedHours: updated.estimatedHours === null ? null : Number(updated.estimatedHours),
+      aiDelegable: updated.aiDelegable,
+      aiMetadata: updated.aiMetadata ?? null,
+      assignees: updated.assignees.filter((u) => !u.deletedAt).map((u) => fullName(u)),
+      checklist: items.map((c) => ({ id: strId(c.id), title: c.title, done: c.done })),
+      link: buildTaskLink(updated),
     };
   }
 
@@ -568,6 +773,7 @@ class McpService {
       _sum: { durationSeconds: true },
       where: { deletedAt: null, endedAt: { not: null }, task: { projectId: id, deletedAt: null } },
     });
+    const forecast = await projectForecastService.build(id);
 
     const byColumn = new Map<string, number>();
     const byAssignee = new Map<string, number>();
@@ -617,6 +823,9 @@ class McpService {
         sentAt: dmy(p.sentAt),
         validUntil: dmy(p.validUntil),
       })),
+      // Data-driven projection (no LLM): remaining estimate × real tracked/estimated ratio over
+      // the recent velocity. Ground real answers ("when will it be done?") on this.
+      forecast,
     };
   }
 

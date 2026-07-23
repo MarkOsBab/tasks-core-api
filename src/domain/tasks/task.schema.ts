@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { toBigIntOrUndefined } from '@/lib/ids';
 import {
   lmsg,
+  nullableBool,
   nullableInt,
   nullableNumber,
   nullableString,
@@ -96,6 +97,7 @@ export const storeTaskSchema = z
     position: nullableInt('position', 0),
     dueDate: nullableDate('dueDate'),
     estimatedHours: nullableNumber('estimatedHours', 0),
+    aiDelegable: nullableBool('aiDelegable'),
     assigneeIds: z.array(z.string()).nullable().optional(),
     labelIds: z.array(z.string()).nullable().optional(),
   })
@@ -129,6 +131,7 @@ export function updateTaskSchema(_id: string) {
       position: nullableInt('position', 0),
       dueDate: nullableDate('dueDate'),
       estimatedHours: nullableNumber('estimatedHours', 0),
+      aiDelegable: nullableBool('aiDelegable'),
       assigneeIds: z.array(z.string()).nullable().optional(),
       labelIds: z.array(z.string()).nullable().optional(),
     })
