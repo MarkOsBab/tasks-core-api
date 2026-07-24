@@ -3,7 +3,8 @@ import { dmy } from '@/resources/serialize';
 import {
   loadEstimationSamples,
   medianTrackedToEstimateRatio,
-  type EstimationSample,
+  MIN_LABEL_SAMPLES,
+  ratioByLabel,
 } from '../estimation/estimation-samples';
 
 // Data-driven delivery forecast for one project — plain math over the DB, no LLM (same
@@ -11,14 +12,13 @@ import {
 // tracked/estimated ratio of past cards, projected over the recent tracking velocity.
 
 const VELOCITY_WINDOW_DAYS = 14;
-const MIN_LABEL_SAMPLES = 3;
 
 export interface ProjectForecast {
   openTasks: number;
   estimatedOpenTasks: number; // open tasks that carry an estimate (the rest are invisible hours)
   remainingEstimatedHours: number;
   medianTrackedToEstimateRatio: number | null; // global signal, shared with the AI generator
-  ratioByLabel: Record<string, number>; // labels with >= MIN_LABEL_SAMPLES calibration samples
+  ratioByLabel: Record<string, number>; // labels with >= MIN_LABEL_SAMPLES (5) calibration samples; used to correct each open task by its own label before summing
   correctedRemainingHours: number; // remaining × ratio (1 when no history yet)
   recentVelocityHoursPerDay: number; // closed tracked hours on this project, last 14 days / 14
   projectedFinishDate: string | null; // d/m/Y; null when there is no recent velocity
@@ -34,30 +34,12 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function ratioByLabel(samples: EstimationSample[]): Record<string, number> {
-  const byLabel = new Map<string, EstimationSample[]>();
-  for (const sample of samples) {
-    for (const label of sample.labels) {
-      const bucket = byLabel.get(label) ?? [];
-      bucket.push(sample);
-      byLabel.set(label, bucket);
-    }
-  }
-  const result: Record<string, number> = {};
-  for (const [label, bucket] of byLabel) {
-    if (bucket.length < MIN_LABEL_SAMPLES) continue;
-    const median = medianTrackedToEstimateRatio(bucket);
-    if (median !== null) result[label] = median;
-  }
-  return result;
-}
-
 class ProjectForecastService {
   async build(projectId: bigint): Promise<ProjectForecastResult> {
     const [openTasks, samples, recentTracked] = await Promise.all([
       prisma.task.findMany({
         where: { projectId, deletedAt: null, column: { isTerminal: false } },
-        select: { estimatedHours: true },
+        select: { estimatedHours: true, labels: { select: { name: true, deletedAt: true } } },
       }),
       loadEstimationSamples(),
       prisma.timeEntry.aggregate({
@@ -85,7 +67,16 @@ class ProjectForecastService {
     }
 
     const ratio = medianTrackedToEstimateRatio(samples);
-    const corrected = round1(remaining * (ratio ?? 1));
+    const byLabel = ratioByLabel(samples);
+    // Per-task correction: use the estimating task's own label ratio when it has enough
+    // calibration samples, otherwise fall back to the global ratio.
+    const corrected = round1(
+      estimated.reduce((sum, task) => {
+        const labels = task.labels.filter((l) => !l.deletedAt).map((l) => l.name);
+        const labelRatio = labels.map((name) => byLabel[name]).find((r) => r !== undefined);
+        return sum + Number(task.estimatedHours) * (labelRatio ?? ratio ?? 1);
+      }, 0),
+    );
     // Two decimals: real velocities on small teams are fractions of an hour per day.
     const velocity =
       Math.round(((recentTracked._sum.durationSeconds ?? 0) / 3600 / VELOCITY_WINDOW_DAYS) * 100) /
@@ -119,7 +110,7 @@ class ProjectForecastService {
         estimatedOpenTasks: estimated.length,
         remainingEstimatedHours: round1(remaining),
         medianTrackedToEstimateRatio: ratio,
-        ratioByLabel: ratioByLabel(samples),
+        ratioByLabel: byLabel,
         correctedRemainingHours: corrected,
         recentVelocityHoursPerDay: velocity,
         projectedFinishDate: projectedFinish,
