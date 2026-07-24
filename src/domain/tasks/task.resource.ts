@@ -94,6 +94,17 @@ export function taskResource(task: TaskWithRelations) {
     createdByName: task.createdBy ? fullName(task.createdBy) : null,
     // Implementation spec of AI-generated cards (null on hand-made ones); read by MCP agents.
     aiMetadata: task.aiMetadata ?? null,
+    // Resolved dependsOnTaskIds (attached only by the list flow): board badge + blocked state.
+    ...(task.dependsOn && task.dependsOn.length > 0
+      ? {
+          dependsOn: task.dependsOn.map((dep) => ({
+            id: strId(dep.id),
+            title: dep.title,
+            done: dep.done,
+          })),
+          blocked: task.dependsOn.some((dep) => !dep.done),
+        }
+      : {}),
     prUrl: task.prUrl ?? null,
     aiDelegable: task.aiDelegable,
     estimatedHours: task.estimatedHours === null ? null : Number(task.estimatedHours),
