@@ -7,7 +7,7 @@ import { BaseService } from '../base/base.service';
 import { buildTaskLink, notificationService } from '../notifications/notification.service';
 import { TaskRepository, taskRepository } from './task.repository';
 import { parseDateInput } from './task.schema';
-import type { TaskWithRelations } from './task.types';
+import type { TaskDependency, TaskWithRelations } from './task.types';
 
 const AI_RUNNER_WORKFLOW = 'ai-runner.yml';
 const DEFAULT_DELEGATE_REPO = 'micelium-dev/core-tasks-ui';
@@ -45,6 +45,51 @@ class TaskService extends BaseService<TaskWithRelations> {
 
   selectOptions(q: string | null, projectId: string | null, boardId: string | null) {
     return this.tasks.selectOptions(q, projectId, boardId);
+  }
+
+  async list(filters: Record<string, string>, page: number, size: number) {
+    const result = await super.list(filters, page, size);
+    await this.attachDependencies(result.items);
+    return result;
+  }
+
+  /** Resolves every card's aiMetadata.dependsOnTaskIds for the page in ONE query (no N+1). */
+  private async attachDependencies(items: TaskWithRelations[]): Promise<void> {
+    const idsByTask = new Map<TaskWithRelations, bigint[]>();
+    const wanted = new Set<bigint>();
+    for (const task of items) {
+      const ids = this.dependsOnIds(task.aiMetadata);
+      if (ids.length === 0) continue;
+      idsByTask.set(task, ids);
+      for (const id of ids) wanted.add(id);
+    }
+    if (wanted.size === 0) return;
+    const rows = await prisma.task.findMany({
+      where: { id: { in: [...wanted] }, deletedAt: null },
+      select: { id: true, title: true, column: { select: { isTerminal: true } } },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const [task, ids] of idsByTask) {
+      // Deleted/unknown dependencies are dropped: they can no longer block anything.
+      task.dependsOn = ids.flatMap<TaskDependency>((id) => {
+        const dep = byId.get(id);
+        return dep ? [{ id: dep.id, title: dep.title, done: dep.column.isTerminal }] : [];
+      });
+    }
+  }
+
+  /** dependsOnTaskIds inside the JSON spec: string/number ids; anything malformed is ignored. */
+  private dependsOnIds(aiMetadata: unknown): bigint[] {
+    if (aiMetadata === null || typeof aiMetadata !== 'object') return [];
+    const raw = (aiMetadata as Record<string, unknown>)['dependsOnTaskIds'];
+    if (!Array.isArray(raw)) return [];
+    const ids: bigint[] = [];
+    for (const value of raw) {
+      if (typeof value !== 'string' && typeof value !== 'number') continue;
+      const id = toBigIntOrUndefined(String(value));
+      if (id !== undefined) ids.push(id);
+    }
+    return ids;
   }
 
   async create(data: Record<string, unknown>, user?: AuthUser): Promise<TaskWithRelations> {
