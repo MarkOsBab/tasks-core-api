@@ -14,3 +14,4 @@ process.env['NOTIFICATIONS_EMAIL_ENABLED'] = 'false';
 delete process.env['OPENAI_API_KEY'];
 delete process.env['AWS_ACCESS_KEY_ID'];
 delete process.env['AWS_SECRET_ACCESS_KEY'];
+delete process.env['GITHUB_PAT'];

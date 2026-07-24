@@ -1,12 +1,21 @@
 import { prisma } from '@/lib/prisma';
-import { unprocessable } from '@/lib/http-error';
+import { HttpError, unprocessable } from '@/lib/http-error';
 import { toBigIntOrUndefined } from '@/lib/ids';
+import { optionalEnv } from '@/lib/env';
 import type { AuthUser } from '@/lib/auth/context';
 import { BaseService } from '../base/base.service';
 import { buildTaskLink, notificationService } from '../notifications/notification.service';
 import { TaskRepository, taskRepository } from './task.repository';
 import { parseDateInput } from './task.schema';
 import type { TaskWithRelations } from './task.types';
+
+const AI_RUNNER_WORKFLOW = 'ai-runner.yml';
+const DEFAULT_DELEGATE_REPO = 'micelium-dev/core-tasks-ui';
+
+export interface DelegateResult {
+  repo: string;
+  ref: string;
+}
 
 const TASK_INCLUDE = {
   column: { include: { board: true } },
@@ -172,6 +181,50 @@ class TaskService extends BaseService<TaskWithRelations> {
       prepared.labels = existing ? { set: ids } : { connect: ids };
     }
     return prepared;
+  }
+
+  /**
+   * Fires an on-demand `workflow_dispatch` of `ai-runner.yml` on the card's target repo, so the
+   * autonomous runner picks it up right away instead of waiting for the nightly cron. The runner
+   * itself chooses which delegable card to work on, so no taskId is passed to the workflow.
+   */
+  async delegate(task: TaskWithRelations): Promise<DelegateResult> {
+    if (!task.aiDelegable || task.column.isTerminal) {
+      throw new HttpError(409, 'Task is not delegable or is already in a terminal column.');
+    }
+    const pat = optionalEnv('GITHUB_PAT');
+    if (!pat) throw new HttpError(503, 'GITHUB_PAT is not configured.');
+
+    const repo = this.targetRepos(task.aiMetadata)[0] ?? DEFAULT_DELEGATE_REPO;
+    const headers = {
+      Authorization: `Bearer ${pat}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+    };
+
+    const repoRes = await fetch(`https://api.github.com/repos/${repo}`, { headers });
+    if (!repoRes.ok) {
+      throw new HttpError(503, `GitHub API error resolving repo ${repo} (${repoRes.status}).`);
+    }
+    const { default_branch: ref } = (await repoRes.json()) as { default_branch: string };
+
+    const dispatchRes = await fetch(
+      `https://api.github.com/repos/${repo}/actions/workflows/${AI_RUNNER_WORKFLOW}/dispatches`,
+      { method: 'POST', headers, body: JSON.stringify({ ref }) },
+    );
+    if (!dispatchRes.ok) {
+      throw new HttpError(503, `GitHub API error dispatching the workflow (${dispatchRes.status}).`);
+    }
+    return { repo, ref };
+  }
+
+  private targetRepos(aiMetadata: unknown): string[] {
+    if (aiMetadata && typeof aiMetadata === 'object' && !Array.isArray(aiMetadata)) {
+      const repos = (aiMetadata as Record<string, unknown>).targetRepos;
+      if (Array.isArray(repos)) return repos.filter((r): r is string => typeof r === 'string');
+    }
+    return [];
   }
 
   /** Kanban move: closes the origin-column gap, opens one in the destination, relocates the card. */
