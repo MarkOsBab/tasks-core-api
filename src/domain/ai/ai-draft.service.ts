@@ -1,6 +1,7 @@
 import { HttpError, unprocessable } from '@/lib/http-error';
 import { aiEnabled, aiModel, openaiClient } from '@/lib/ai';
 import { prisma } from '@/lib/prisma';
+import { toBigIntOrUndefined } from '@/lib/ids';
 import type { AuthUser } from '@/lib/auth/context';
 import { taskService } from '../tasks/task.service';
 import type { TaskWithRelations } from '../tasks/task.types';
@@ -172,17 +173,42 @@ Each card also carries a machine-readable spec that a coding agent will use to i
 - technicalNotes: implementation hints for the agent (likely modules/endpoints/components, API contracts, edge cases, gotchas), inferred from the notes and the workspace. Null only when the card is trivial.
 - targetRepos: the exact repository strings from the card's project (projects[].repositories) where the work happens; empty if the project has none registered or it is unclear.
 - dependsOnIndexes: 0-based indexes of other drafts in THIS response that must land first (e.g. the API endpoint before the UI screen). Empty when independent.
-Do not invent ids: every columnId/projectId/labelId/assigneeId must come from the snapshot.`;
+Do not invent ids: every columnId/projectId/labelId/assigneeId must come from the snapshot.
+
+When a "Project learnings" block is given, it is institutional memory from past cards on this same project: known gotchas, constraints and decisions that stayed true. Reflect the relevant ones in technicalNotes (and in acceptanceCriteria when they translate into a checkable condition) for the cards they apply to; ignore the ones unrelated to this batch.`;
 
 function byId<T extends { id: string }>(items: T[]): Map<string, T> {
   return new Map(items.map((item) => [item.id, item]));
 }
 
+// Cap on institutional-memory facts fed into the prompt — recent gotchas matter most and the
+// snapshot is already large.
+const LEARNINGS_LIMIT = 20;
+
 class AiDraftService {
+  /**
+   * Recent institutional memory for the target project (add_learning via the MCP), newest
+   * first. Read-only extra query, no additional model call.
+   */
+  private async loadLearnings(projectId: string | null): Promise<string[]> {
+    const bigId = projectId ? toBigIntOrUndefined(projectId) : undefined;
+    if (bigId === undefined) return [];
+    const rows = await prisma.projectLearning.findMany({
+      where: { projectId: bigId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: LEARNINGS_LIMIT,
+      select: { body: true },
+    });
+    return rows.map((row) => row.body);
+  }
+
   /** Turns rough notes into reviewable draft cards. Nothing is persisted here. */
   async generate(input: string, projectId: string | null): Promise<AiTaskDraft[]> {
     if (!aiEnabled()) throw new HttpError(503, 'AI assistant is not configured.');
-    const context = await aiContextService.build();
+    const [context, learnings] = await Promise.all([
+      aiContextService.build(),
+      this.loadLearnings(projectId),
+    ]);
     if (context.columns.length === 0) {
       throw unprocessable('The global board has no columns to place cards in.');
     }
@@ -197,6 +223,11 @@ class AiDraftService {
           content: [
             `Workspace snapshot:\n${JSON.stringify(context)}`,
             projectId ? `Target project id (pin every card to it): ${projectId}` : null,
+            learnings.length > 0
+              ? `Project learnings (institutional memory, most recent first):\n${learnings
+                  .map((body) => `- ${body}`)
+                  .join('\n')}`
+              : null,
             `Notes:\n${input}`,
           ]
             .filter(Boolean)
