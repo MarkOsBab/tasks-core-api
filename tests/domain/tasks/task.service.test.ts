@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import { notificationService } from '@/domain/notifications/notification.service';
 import { taskService } from '@/domain/tasks/task.service';
@@ -165,5 +165,89 @@ describe('move', () => {
     const update = prismaMock.task.update.mock.calls[0][0];
     // Global board (no board project): the task keeps its explicit tag.
     expect(update.data).toMatchObject({ columnId: 20n, position: 1, projectId: 5n });
+  });
+});
+
+describe('delegate', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects a task that is not aiDelegable', async () => {
+    const task = taskFixture({ aiDelegable: false, column: { isTerminal: false } });
+    await expect(taskService.delegate(task)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('rejects a task already in a terminal column', async () => {
+    const task = taskFixture({ aiDelegable: true, column: { isTerminal: true } });
+    await expect(taskService.delegate(task)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('returns 503 when GITHUB_PAT is not configured', async () => {
+    const task = taskFixture({ aiDelegable: true, column: { isTerminal: false } });
+    await expect(taskService.delegate(task)).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('dispatches the workflow on the repo from aiMetadata.targetRepos, using its default branch', async () => {
+    vi.stubEnv('GITHUB_PAT', 'test-pat');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ default_branch: 'develop' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    const task = taskFixture({
+      aiDelegable: true,
+      column: { isTerminal: false },
+      aiMetadata: { targetRepos: ['MarkOsBab/tasks-core-api'] },
+    });
+
+    const result = await taskService.delegate(task);
+
+    expect(result).toEqual({ repo: 'MarkOsBab/tasks-core-api', ref: 'develop' });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.github.com/repos/MarkOsBab/tasks-core-api',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer test-pat' }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.github.com/repos/MarkOsBab/tasks-core-api/actions/workflows/ai-runner.yml/dispatches',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ ref: 'develop' }) }),
+    );
+  });
+
+  it('falls back to the default repo when the card has no targetRepos', async () => {
+    vi.stubEnv('GITHUB_PAT', 'test-pat');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ default_branch: 'main' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    const task = taskFixture({ aiDelegable: true, column: { isTerminal: false }, aiMetadata: null });
+
+    const result = await taskService.delegate(task);
+
+    expect(result).toEqual({ repo: 'micelium-dev/core-tasks-ui', ref: 'main' });
+  });
+
+  it('returns 503 when the GitHub API rejects the repo lookup', async () => {
+    vi.stubEnv('GITHUB_PAT', 'test-pat');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 404 }));
+    const task = taskFixture({ aiDelegable: true, column: { isTerminal: false }, aiMetadata: null });
+
+    await expect(taskService.delegate(task)).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('returns 503 when the workflow dispatch call fails', async () => {
+    vi.stubEnv('GITHUB_PAT', 'test-pat');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ default_branch: 'main' }) })
+      .mockResolvedValueOnce({ ok: false, status: 422 });
+    vi.stubGlobal('fetch', fetchMock);
+    const task = taskFixture({ aiDelegable: true, column: { isTerminal: false }, aiMetadata: null });
+
+    await expect(taskService.delegate(task)).rejects.toMatchObject({ status: 503 });
   });
 });
