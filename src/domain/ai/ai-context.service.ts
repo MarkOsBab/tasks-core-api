@@ -3,6 +3,7 @@ import { strId } from '@/resources/serialize';
 import {
   loadEstimationSamples,
   medianTrackedToEstimateRatio,
+  ratioByLabel,
 } from '../estimation/estimation-samples';
 
 /**
@@ -66,8 +67,10 @@ export interface AiWorkspaceContext {
       labels: string[];
       estimatedHours: number;
       trackedHours: number;
+      recent: boolean;
     }[];
     medianTrackedToEstimateRatio: number | null; // <1 = past estimates ran high by that factor
+    ratioByLabel: Record<string, number>; // per-label ratio when a label has >= 5 calibration samples
   };
   proposals: { title: string; status: string; project: string | null; summary: string | null }[];
 }
@@ -347,6 +350,7 @@ class AiContextService {
       estimation: {
         samples: estimationSamples,
         medianTrackedToEstimateRatio: medianRatio,
+        ratioByLabel: ratioByLabel(estimationSamples),
       },
       proposals: proposals.map((proposal) => ({
         title: proposal.title,
